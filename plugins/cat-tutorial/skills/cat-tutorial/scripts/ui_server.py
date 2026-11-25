@@ -17,6 +17,9 @@ import math
 import mimetypes
 import os
 import re
+import secrets
+import shutil
+import zipfile
 import subprocess
 import sys
 import tempfile
@@ -37,6 +40,46 @@ IDLE_EXIT = 120  # giây không có trang nào mở thì tự tắt
 CACHE = Path.home() / ".cat-tutorial" / "cache"  # ảnh thu nhỏ, bản xem trước (giữ qua các lần mở)
 CACHE.mkdir(parents=True, exist_ok=True)
 SESSION = Path.home() / ".cat-tutorial" / "session.json"  # danh sách thư mục + điểm cắt + trạng thái duyệt
+
+# ---- chế độ web (CAT_TUTORIAL_WEB=1): nhiều người dùng qua Internet, tải video lên / tải bản cắt về.
+# Mỗi trình duyệt có một khu riêng (cookie ngẫu nhiên); không ai đọc được ổ đĩa máy chủ hay khu của người khác.
+WEB = bool(os.environ.get("CAT_TUTORIAL_WEB"))
+WEB_ROOT = Path.home() / ".cat-tutorial" / "web"
+MAX_FILE = int(float(os.environ.get("CAT_TUTORIAL_MAX_FILE_MB", "500")) * 2**20)   # mỗi video
+MAX_WS = int(float(os.environ.get("CAT_TUTORIAL_MAX_WS_GB", "5")) * 2**30)          # mỗi người
+MIN_FREE = int(float(os.environ.get("CAT_TUTORIAL_MIN_FREE_GB", "10")) * 2**30)     # chừa trống ổ đĩa
+TTL = float(os.environ.get("CAT_TUTORIAL_TTL_H", "24")) * 3600                      # tự xoá sau
+_WS_RE = re.compile(r"^[0-9a-f]{32}$")
+if WEB:
+    SESSION = Path.home() / ".cat-tutorial" / "web_session.json"
+    WEB_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def ws_dir(ws: str) -> Path:
+    return WEB_ROOT / ws
+
+
+def to_pub(path: str | None, ws: str | None) -> str | None:
+    """Đường dẫn thật -> tên hiển thị trong khu của người dùng (không lộ đường dẫn máy chủ)."""
+    if not WEB or path is None:
+        return path
+    return str(Path(path).relative_to(ws_dir(ws)))
+
+
+def from_pub(s: str, ws: str | None) -> str | None:
+    """Tên từ trình duyệt -> đường dẫn thật, chỉ khi nằm trong khu của chính người đó."""
+    if not WEB:
+        return s
+    if not s or not ws:
+        return None
+    root = ws_dir(ws).resolve()
+    p = (root / s).resolve()
+    return str(p) if p != root and p.is_relative_to(root) else None
+
+
+def _safe_name(s: str, fallback: str) -> str:
+    s = re.sub(r"[\x00-\x1f/\\:]", "_", (s or "").strip()).strip(". ")
+    return s[:120] or fallback
 
 
 def _key(vid: str) -> str:
@@ -239,13 +282,159 @@ def remove_folder(folder: str) -> dict:
     return public_state()
 
 
-def public_state() -> dict:
+def _mine(folder: str, ws: str | None) -> bool:
+    return not WEB or (ws is not None and Path(folder).parent == ws_dir(ws))
+
+
+def public_state(ws: str | None = None) -> dict:
     with lock:
         vids = [{k: state["videos"][i].get(k) for k in (
             "id", "name", "folder", "status", "segs", "auto_segs", "note", "duration", "fps", "error",
-            "output", "sprite_n", "exported_segs", "reviewed")} for i in state["order"]]
-        return {"groups": [dict(g) for g in state["groups"]], "videos": vids,
-                "out_dirname": ct.OUT_DIRNAME, "backend": ct.BACKEND}
+            "output", "sprite_n", "exported_segs", "reviewed")} for i in state["order"]
+            if _mine(state["videos"][i]["folder"], ws)]
+        groups = [dict(g) for g in state["groups"] if _mine(g["folder"], ws)]
+    if WEB:
+        for v in vids:
+            v["id"], v["folder"], v["output"] = to_pub(v["id"], ws), to_pub(v["folder"], ws), to_pub(v["output"], ws)
+            v["error"] = (v["error"] or "").replace(str(WEB_ROOT), "…") or None
+        for g in groups:
+            g["folder"] = to_pub(g["folder"], ws)
+    out = {"groups": groups, "videos": vids, "out_dirname": ct.OUT_DIRNAME, "backend": ct.BACKEND, "web": WEB}
+    if WEB:
+        out["limits"] = {"file_mb": MAX_FILE // 2**20, "ws_gb": round(MAX_WS / 2**30, 1), "ttl_h": round(TTL / 3600)}
+    return out
+
+
+# ------------------------------------------------------------------ web: tải lên, dọn dẹp
+def _du(p: Path) -> int:
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.exists() else 0
+
+
+def _looks_video(p: Path) -> bool:
+    try:
+        with open(p, "rb") as f:
+            head = f.read(12)
+    except OSError:
+        return False
+    return head[4:8] == b"ftyp" or head[:4] == b"\x1a\x45\xdf\xa3"
+
+
+def upload_chunk(ws: str, q: dict, rfile, length: int) -> bool:
+    """Nhận 1 mảnh của 1 file (Cloudflare chặn mỗi request >100MB nên trình duyệt chia nhỏ).
+    Trả về True khi đã nhận đủ file và đưa vào hàng nhận diện."""
+    g = lambda k: q.get(k, [""])[0]  # noqa: E731
+    up, name, batch = g("id"), g("name"), g("batch")
+    offset, total = int(g("offset") or 0), int(g("total") or 0)
+    if not re.fullmatch(r"[0-9a-z]{8,40}", up):
+        raise ValueError("Mã tải lên không hợp lệ")
+    if total <= 0 or length <= 0:
+        raise ValueError("File rỗng")
+    if total > MAX_FILE:
+        raise ValueError(f"{name}: quá lớn (tối đa {MAX_FILE // 2**20}MB mỗi video)")
+    if length > 64 * 2**20 or offset + length > total:
+        raise ValueError("Mảnh tải lên không hợp lệ")
+    root = ws_dir(ws)
+    tmp = root / f".up_{up}"
+    if offset == 0:
+        if not re.search(r"\.(mp4|mov|m4v|webm|mkv|avi)$", name, re.I) and not name.endswith("_"):
+            raise ValueError(f"{name}: không phải file video")
+        if _du(root) + total > MAX_WS:
+            raise ValueError(f"Đã dùng hết {MAX_WS / 2**30:.0f}GB cho phiên này — gỡ bớt thư mục cũ rồi tải tiếp")
+        if shutil.disk_usage(WEB_ROOT).free - total < MIN_FREE:
+            raise ValueError("Máy chủ sắp đầy ổ đĩa, thử lại sau")
+        tmp.unlink(missing_ok=True)
+    elif not tmp.exists() or tmp.stat().st_size != offset:
+        raise ValueError("Tải lên bị gián đoạn, hãy tải lại file này")
+    left = length
+    with open(tmp, "ab") as f:
+        while left > 0:
+            chunk = rfile.read(min(1 << 20, left))
+            if not chunk:
+                raise ValueError("Tải lên bị ngắt giữa chừng")
+            f.write(chunk)
+            left -= len(chunk)
+    if offset + length < total:
+        return False
+    if not _looks_video(tmp):
+        tmp.unlink(missing_ok=True)
+        raise ValueError(f"{name}: không phải file video")
+    folder = root / _safe_name(batch, "Video tải lên")
+    if folder.name in (ct.OUT_DIRNAME,) or folder.name.startswith("."):
+        folder = root / "Video tải lên"
+    folder.mkdir(parents=True, exist_ok=True)
+    nm = _safe_name(name, "video.mp4")
+    dst, k = folder / nm, 1
+    while dst.exists():
+        dst = folder / f"{Path(nm).stem} ({k}){Path(nm).suffix}"
+        k += 1
+    tmp.rename(dst)
+    vid = str(dst)
+    with lock:
+        if not any(gr["folder"] == str(folder) for gr in state["groups"]):
+            state["groups"].append({"folder": str(folder), "name": folder.name})
+        state["videos"][vid] = {"id": vid, "name": dst.name, "folder": str(folder), "status": "queued",
+                                "segs": [], "auto_segs": [], "note": "", "duration": 0, "fps": 30}
+        same = sorted([i for i in state["order"] if state["videos"][i]["folder"] == str(folder)] + [vid],
+                      key=lambda i: _natural(Path(i).name))
+        others = [i for i in state["order"] if state["videos"][i]["folder"] != str(folder)]
+        state["order"] = others + same
+    analyze_pool.submit(_analyze, vid)
+    save_session()
+    return True
+
+
+def _drop_cache(vid: str):
+    for f in (CACHE / f"{_key(vid)}.jpg", CACHE / f"prev_{_key(vid)}.mp4"):
+        f.unlink(missing_ok=True)
+
+
+def drop_folders(folders: list[str]):
+    """Web: gỡ thư mục khỏi danh sách VÀ xoá file trên máy chủ."""
+    with lock:
+        gone = [i for i in state["order"] if state["videos"][i]["folder"] in folders]
+        state["groups"] = [g for g in state["groups"] if g["folder"] not in folders]
+        for vid in gone:
+            state["videos"].pop(vid, None)
+        state["order"] = [i for i in state["order"] if i in state["videos"]]
+    for vid in gone:
+        _drop_cache(vid)
+    for f in folders:
+        shutil.rmtree(f, ignore_errors=True)
+    save_session()
+
+
+def _janitor():
+    while True:
+        time.sleep(600)
+        now = time.time()
+        for d in WEB_ROOT.iterdir() if WEB_ROOT.exists() else []:
+            try:
+                if d.is_dir() and now - d.stat().st_mtime > TTL:
+                    with lock:
+                        mine = [g["folder"] for g in state["groups"] if Path(g["folder"]).parent == d]
+                        working = any(state["videos"][i]["status"] in ("analyzing", "exporting")
+                                      for i in state["order"] if state["videos"][i]["folder"] in mine)
+                    if working:
+                        continue
+                    drop_folders(mine)
+                    shutil.rmtree(d, ignore_errors=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def zip_outputs(folders: list[str]) -> Path | None:
+    with lock:
+        outs = [(state["videos"][i]["folder"], state["videos"][i]["output"]) for i in state["order"]
+                if state["videos"][i]["folder"] in folders and state["videos"][i].get("output")]
+    outs = [(f, o) for f, o in outs if Path(o).exists()]
+    if not outs:
+        return None
+    tmp = Path(tempfile.mkstemp(suffix=".zip", dir=CACHE)[1])
+    multi = len({f for f, _ in outs}) > 1
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+        for f, o in outs:
+            z.write(o, f"{Path(f).name}/{Path(o).name}" if multi else Path(o).name)
+    return tmp
 
 
 _prev_locks: dict[str, threading.Lock] = {}
@@ -292,6 +481,40 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _ws(self) -> str | None:
+        """Khu của trình duyệt này (web). Chưa có thì cấp mới qua cookie."""
+        if not WEB:
+            return None
+        if getattr(self, "_wsid", None):
+            return self._wsid
+        m = re.search(r"(?:^|;\s*)ct_ws=([0-9a-f]{32})", self.headers.get("Cookie") or "")
+        ws = m.group(1) if m else None
+        if not ws or not _WS_RE.match(ws):
+            ws = secrets.token_hex(16)
+            self._newws = ws
+        d = ws_dir(ws)
+        d.mkdir(parents=True, exist_ok=True)
+        os.utime(d)  # còn dùng -> chưa bị dọn
+        self._wsid = ws
+        return ws
+
+    def end_headers(self):
+        if getattr(self, "_newws", None):
+            self.send_header("Set-Cookie", f"ct_ws={self._newws}; Path=/; Max-Age={int(TTL)}; HttpOnly; SameSite=Lax")
+            self._newws = None
+        super().end_headers()
+
+    def _v(self, s: str) -> str | None:
+        """id video từ trình duyệt -> id thật (đã kiểm tra thuộc khu của người này)."""
+        vid = from_pub(s, self._ws())
+        with lock:
+            return vid if vid in state["videos"] else None
+
+    def _folder(self, s: str) -> str | None:
+        f = from_pub(s, self._ws())
+        with lock:
+            return f if any(g["folder"] == f for g in state["groups"]) else None
+
     def _json(self, obj, code=200):
         data = json.dumps(obj).encode()
         self.send_response(code)
@@ -305,7 +528,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(n) or b"{}")
 
-    def _file(self, path: Path, ctype=None):
+    def _file(self, path: Path, ctype=None, download: str | None = None):
         size = path.stat().st_size
         ctype = ctype or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         rng = self.headers.get("Range")
@@ -325,6 +548,8 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(end - start + 1))
+        if download:
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + urllib.parse.quote(download))
         self.end_headers()
         with open(path, "rb") as f:
             f.seek(start)
@@ -340,7 +565,7 @@ class H(BaseHTTPRequestHandler):
                 pass
 
     def _video_path(self, q, which="src") -> Path | None:
-        name = q.get("v", [""])[0]
+        name = self._v(q.get("v", [""])[0])
         with lock:
             if name not in state["videos"]:
                 return None
@@ -354,33 +579,49 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         if u.path in ("/", "/index.html"):
+            self._ws()
             return self._file(HERE / "ui" / "index.html", "text/html; charset=utf-8")
         if u.path == "/api/ping":
             last_ping = time.time()
             return self._json({"ok": True})
         if u.path == "/api/state":
             last_ping = time.time()
-            return self._json(public_state())
+            return self._json(public_state(self._ws()))
         if u.path in ("/video", "/output"):
             p = self._video_path(q, "out" if u.path == "/output" else "src")
             if not p or not p.exists():
                 return self._json({"error": "không thấy video"}, 404)
             ctype = mimetypes.guess_type(str(p))[0]
-            return self._file(p, ctype if ctype and ctype.startswith("video/") else "video/mp4")
+            return self._file(p, ctype if ctype and ctype.startswith("video/") else "video/mp4",
+                              download=p.name if q.get("dl") else None)
+        if u.path == "/api/zip":
+            ws = self._ws()
+            f = q.get("folder", [""])[0]
+            with lock:
+                folders = [self._folder(f)] if f else [g["folder"] for g in state["groups"] if _mine(g["folder"], ws)]
+            folders = [x for x in folders if x]
+            z = zip_outputs(folders)
+            if not z:
+                return self._json({"error": "Chưa có video nào đã xuất"}, 404)
+            try:
+                name = (Path(folders[0]).name if len(folders) == 1 else "video") + "_da_cat.zip"
+                return self._file(z, "application/zip", download=name)
+            finally:
+                z.unlink(missing_ok=True)
         if u.path == "/preview":
-            p = preview_path(q.get("v", [""])[0])
+            p = preview_path(self._v(q.get("v", [""])[0]) or "")
             if not p:
                 return self._json({"error": "không tạo được bản xem trước"}, 404)
             return self._file(p, "video/mp4")
         if u.path == "/sprite":
-            name = q.get("v", [""])[0]
+            name = self._v(q.get("v", [""])[0])
             with lock:
                 sp = state["videos"].get(name, {}).get("sprite")
             if not sp or not Path(sp).exists():
                 return self._json({"error": "chưa có"}, 404)
             return self._file(Path(sp), "image/jpeg")
         if u.path == "/api/edge":
-            name = q.get("v", [""])[0]
+            name = self._v(q.get("v", [""])[0])
             t = float(q.get("t", ["0"])[0])
             n = int(q.get("n", ["3"])[0])
             with lock:
@@ -392,6 +633,11 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
+        if WEB:
+            try:
+                return self._post_web(u)
+            except Exception as ex:  # noqa: BLE001
+                return self._json({"error": f"{ex}" if isinstance(ex, ValueError) else f"{type(ex).__name__}: {ex}"}, 400)
         try:
             body = self._body()
             if u.path == "/api/open":
@@ -448,6 +694,55 @@ class H(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
 
+    def _post_web(self, u):
+        ws = self._ws()
+        q = urllib.parse.parse_qs(u.query)
+        if u.path == "/api/upload":
+            done = upload_chunk(ws, q, self.rfile, int(self.headers.get("Content-Length") or 0))
+            return self._json(public_state(ws) if done else {"ok": True})
+        body = self._body()
+        if u.path == "/api/clear":
+            with lock:
+                mine = [g["folder"] for g in state["groups"] if _mine(g["folder"], ws)]
+            drop_folders(mine)
+            return self._json(public_state(ws))
+        if u.path == "/api/remove":
+            f = self._folder(body.get("folder", ""))
+            if f:
+                drop_folders([f])
+            return self._json(public_state(ws))
+        if u.path == "/api/segs":
+            name = self._v(body.get("v", ""))
+            if not name:
+                raise ValueError("không thấy video")
+            segs = sorted([[round(max(0.0, float(a)), 4), round(float(b), 4)] for a, b in body["segs"] if float(b) > float(a)])
+            with lock:
+                v = state["videos"][name]
+                v["segs"] = segs
+                if v["status"] == "done":
+                    v["status"] = "ready"
+            save_session()
+            return self._json(public_state(ws))
+        if u.path == "/api/review":
+            name = self._v(body.get("v", ""))
+            if name:
+                with lock:
+                    state["videos"][name]["reviewed"] = bool(body.get("on", True))
+                save_session()
+            return self._json(public_state(ws))
+        if u.path == "/api/export":
+            with lock:
+                names = [self._v(n) for n in body["names"]] if body.get("names") else \
+                    [n for n in state["order"] if _mine(state["videos"][n]["folder"], ws)
+                     and state["videos"][n]["status"] in ("ready", "done")]
+                for n in filter(None, names):
+                    if state["videos"][n]["status"] in ("ready", "done", "error") and state["videos"][n].get("info"):
+                        state["videos"][n]["status"] = "exporting"
+                        export_pool.submit(_export, n)
+            return self._json(public_state(ws))
+        return self._json({"error": "Không dùng được trên bản web"}, 403)
+
+
 def _existing():
     try:
         info = json.loads(PORT_FILE.read_text())
@@ -476,6 +771,8 @@ def _watchdog(server):
 
 def main(argv):
     folders = [a for a in argv if a.strip()]
+    if WEB:
+        return main_web()
     url = _existing()
     if url:  # đã có giao diện đang chạy -> thêm thư mục vào đó
         if folders:
@@ -505,6 +802,16 @@ def main(argv):
                 PORT_FILE.unlink()
         except Exception:  # noqa: BLE001
             pass
+    return 0
+
+
+def main_web():
+    port = int(os.environ.get("CAT_TUTORIAL_PORT", "8790"))
+    server = ThreadingHTTPServer(("127.0.0.1", port), H)
+    load_session()
+    threading.Thread(target=_janitor, daemon=True).start()
+    print(f"Cắt Tutorial (web) đang chạy: http://127.0.0.1:{port}", flush=True)
+    server.serve_forever()
     return 0
 
 

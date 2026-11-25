@@ -96,6 +96,15 @@ main{overflow:auto;min-height:0;container-type:inline-size}
 .empty h2{margin:12px 0 6px;font-size:20px}
 .empty p{color:var(--muted);margin:0 0 18px}
 .empty form{display:flex;gap:8px;margin-top:14px}
+.drop{position:fixed;inset:0;z-index:40;display:none;place-items:center;background:rgba(40,20,80,.35);backdrop-filter:blur(3px)}
+.drop.on{display:grid}
+.drop div{border:3px dashed #fff;border-radius:24px;padding:48px 64px;color:#fff;font-size:22px;font-weight:700;text-align:center}
+.upbar{position:fixed;right:18px;bottom:18px;z-index:35;width:300px;max-width:calc(100vw - 36px);background:var(--solid,#fff);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:var(--shadow);display:none;font-size:13px}
+.upbar.on{display:block}
+.upbar .bar{height:6px;border-radius:4px;background:rgba(0,0,0,.08);overflow:hidden;margin-top:8px}
+.upbar .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.webnote{font-size:12.5px;color:var(--muted);margin-top:14px}
+.empty .btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .empty input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:8px 11px;font:inherit}
 
 /* detail */
@@ -286,6 +295,7 @@ button:not(.primary):not(.ok):hover{background:var(--hover)!important}
     <button class="sm" id="btnPick">+ Thêm thư mục</button>
     <div class="menu" id="hmenu"><button class="ico" id="bHMenu" title="Thêm">⋯</button><div class="pop">
       <button id="btnReveal">Mở thư mục kết quả</button>
+      <button id="btnDir" style="display:none">Tải lên cả thư mục…</button>
       <hr><button id="btnClear" class="danger">Xoá danh sách (bắt đầu mới)</button></div></div>
     <button class="primary sm" id="btnExportAll" disabled>Xuất video</button>
   </header>
@@ -295,6 +305,10 @@ button:not(.primary):not(.ok):hover{background:var(--hover)!important}
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<input type="file" id="fFiles" multiple accept="video/*,.mp4,.mov,.m4v,.webm,.mkv" hidden>
+<input type="file" id="fDir" webkitdirectory multiple hidden>
+<div class="drop" id="drop"><div>Thả video hoặc thư mục vào đây</div></div>
+<div class="upbar" id="upbar"><div id="uptxt"></div><div class="bar"><i id="upfill"></i></div></div>
 <div class="offline" id="offline"><div class="box"><div style="font-size:30px">🔌</div><h2>Công cụ đã tắt</h2>
   <p>Kéo thư mục lên icon <b>Cat Tutorial</b> (hoặc mở app) để bật lại — trang này tự kết nối lại, danh sách và chỗ đã duyệt vẫn còn.</p></div></div>
 
@@ -344,8 +358,9 @@ function renderChrome() {
   const vs = S.videos, n = vs.length, G = S.groups || [];
   $("#hinfo").textContent = G.length ? (G.length === 1 ? base(G[0].folder) : `${G.length} thư mục`) + ` · ${n} video` : "";
   const nExp = vs.filter(needsExport).length;
-  $("#btnExportAll").disabled = !nExp;
-  $("#btnExportAll").textContent = nExp ? `Xuất ${nExp} video` : (n && vs.every(v => v.status === "done") ? "Đã xuất hết" : "Xuất video");
+  const canZip = S.web && !nExp && n && vs.every(v => v.status === "done");
+  $("#btnExportAll").disabled = !nExp && !canZip;
+  $("#btnExportAll").textContent = nExp ? `Xuất ${nExp} video` : canZip ? "⬇ Tải về (.zip)" : (n && vs.every(v => v.status === "done") ? "Đã xuất hết" : "Xuất video");
   document.querySelectorAll("#viewSw button").forEach(b => b.classList.toggle("on", b.dataset.view === view));
   const an = vs.filter(v => !busy(v)).length, rev = vs.filter(v => v.reviewed).length, done = vs.filter(v => v.status === "done" && !dirty(v)).length;
   $("#sum").innerHTML = !n ? "" : an < n
@@ -374,6 +389,7 @@ function renderChrome() {
 }
 
 function render() {
+  webChrome();
   renderChrome();
   if (!(S.groups || []).length || !S.videos.length) { built = null; return renderEmpty(); }
   if (view === "all") return renderOverview();
@@ -382,6 +398,17 @@ function render() {
 
 function renderEmpty() {
   built = null; ovKey = null;
+  if (S.web) {
+    const L = S.limits || {};
+    $("#main").innerHTML = `<div class="empty"><div class="box"><div class="ic">🎞️</div>
+      <h2>Tải video lên để bắt đầu</h2>
+      <p>Kéo thả video hoặc cả thư mục vào trang này. Máy sẽ tự tìm đoạn in-app / tutorial, bạn duyệt lại rồi tải bản đã cắt về.</p>
+      <div class="btns"><button class="primary" onclick="$('#fFiles').click()">Chọn video…</button>
+      <button class="btn" onclick="$('#fDir').click()">Chọn thư mục…</button></div>
+      <div class="webnote">Tối đa ${L.file_mb || 500}MB mỗi video, ${L.ws_gb || 5}GB mỗi phiên. Video chỉ bạn thấy và tự xoá sau ${L.ttl_h || 24} giờ.</div>
+    </div></div>`;
+    return;
+  }
   $("#main").innerHTML = `<div class="empty"><div class="box"><div class="ic">🎞️</div>
     <h2>Chọn thư mục video</h2>
     <p>Kéo một hoặc nhiều thư mục lên icon <b>Cat Tutorial</b>, hoặc chọn ở đây (giữ ⌘ để chọn nhiều). Thư mục cha cũng được.</p>
@@ -464,6 +491,7 @@ function buildDetail(v, ready) {
       <div class="menu" id="menu"><button class="ico" id="bMenu" title="Thêm">⋯</button><div class="pop">
         <button id="bExport">Xuất riêng video này</button>
         <button id="bOutput">Xem bản đã xuất</button>
+        <button id="bDl" style="display:none">Tải bản đã xuất về máy</button>
         <hr><button id="bReset">Khôi phục gợi ý của máy</button>
         <button id="bNone">Không cắt video này</button></div></div></div>
     <div id="dmsg"></div>
@@ -519,6 +547,7 @@ function buildDetail(v, ready) {
     $("#bOutput").textContent = showOutput ? "Quay lại video gốc" : "Xem bản đã xuất";
     toast(showOutput ? "Đang xem bản đã xuất" : "Đang xem video gốc");
   };
+  $("#bDl").onclick = () => { location.href = "/output?dl=1&v=" + encodeURIComponent(v.id); };
   $("#bMark").onclick = () => markHere();
   $("#bCutEnd").onclick = async () => {
     const t = vid.currentTime, segs = V(v.id).segs.filter(([s]) => s < t).map(([s, e]) => [s, Math.min(e, t)]);
@@ -560,6 +589,7 @@ function updateDetail(v, ready) {
   $("#bReset").disabled = !edited(v); $("#bNone").disabled = !v.segs.length;
   $("#bExport").disabled = v.status === "exporting";
   $("#bOutput").style.display = v.status === "done" ? "" : "none";
+  $("#bDl").style.display = S.web && v.status === "done" ? "" : "none";
   $("#stat").innerHTML = `Giữ <b>${f1(v.duration - cutLen(v))}</b> / ${f1(v.duration)}`;
   const key = JSON.stringify(v.segs), tl = $("#tl");
   if (tl.dataset.key !== key) {
@@ -638,7 +668,7 @@ async function review(id, on, quiet) {
 async function removeFolder(folder) {
   const gv = S.videos.filter(v => v.folder === folder);
   const pending = gv.filter(v => needsExport(v) && (v.reviewed || edited(v))).length;
-  if (!confirm(`Gỡ thư mục "${base(folder)}" khỏi danh sách?` + (pending ? `\n${pending} video đã duyệt/chỉnh nhưng chưa xuất sẽ mất thay đổi.` : "") + "\n(Không xoá file nào trên máy.)")) return;
+  if (!confirm(`Gỡ thư mục "${base(folder)}" khỏi danh sách?` + (pending ? `\n${pending} video đã duyệt/chỉnh nhưng chưa xuất sẽ mất thay đổi.` : "") + (S.web ? "\nVideo gốc và bản đã cắt của thư mục này sẽ bị xoá khỏi máy chủ." : "\n(Không xoá file nào trên máy.)"))) return;
   S = await api("/api/remove", {folder});
   if (!V(sel)) { sel = null; built = null; }
   ovKey = null; render();
@@ -691,15 +721,90 @@ function loop() {
 function select(id) { sel = id; built = null; render(); }
 async function pick() { const j = await api("/api/pick", {}); if (!j.cancelled) { const had = !!(S.groups || []).length; S = j; if (!had) sel = null; ovKey = null; render(); toast("Đã thêm thư mục"); } }
 async function openPath(p) { if (!p.trim()) return; S = await api("/api/open", {folders: [p.trim()]}); sel = null; ovKey = null; render(); }
-$("#btnPick").onclick = pick;
+$("#btnPick").onclick = () => S.web ? $("#fFiles").click() : pick();
 $("#bHMenu").onclick = e => { e.stopPropagation(); $("#hmenu").classList.toggle("open"); };
-$("#btnReveal").onclick = () => api("/api/reveal", view === "one" && V(sel) ? {folder: V(sel).folder} : {});
+$("#btnReveal").onclick = () => {
+  if (!S.web) return api("/api/reveal", view === "one" && V(sel) ? {folder: V(sel).folder} : {});
+  if (!S.videos.some(v => v.status === "done")) return toast("Chưa có video nào đã xuất");
+  location.href = "/api/zip" + (view === "one" && V(sel) ? "?folder=" + encodeURIComponent(V(sel).folder) : "");
+};
+$("#btnDir").onclick = () => $("#fDir").click();
+
+/* ---------------- web: tải lên ---------------- */
+let webSet = false;
+function webChrome() {
+  if (!S.web || webSet) return; webSet = true;
+  $("#btnPick").textContent = "+ Tải video lên";
+  $("#btnReveal").textContent = "Tải video đã cắt (.zip)";
+  $("#btnDir").style.display = "";
+  $("#offline .box").innerHTML = `<div style="font-size:30px">🔌</div><h2>Mất kết nối máy chủ</h2><p>Máy chủ đang tắt hoặc mạng bị gián đoạn. Trang sẽ tự kết nối lại.</p>`;
+}
+const VIDRE = /\.(mp4|mov|m4v|webm|mkv|avi)$|_$/i;
+const stamp = () => { const d = new Date(), z = n => String(n).padStart(2, "0"); return `Tải lên ${z(d.getHours())}h${z(d.getMinutes())} ${z(d.getDate())}-${z(d.getMonth() + 1)}`; };
+const upQ = []; let upBusy = false, upDone = 0, upTotal = 0, upBytes = 0, upAll = 0;
+function enqueue(items) {
+  items = items.filter(x => VIDRE.test(x.file.name) && !x.file.name.startsWith("."));
+  if (!items.length) return toast("Không thấy file video nào");
+  const max = (S.limits?.file_mb || 500) * 1048576, big = items.filter(x => x.file.size > max);
+  if (big.length) toast(`Bỏ qua ${big.length} video lớn hơn ${S.limits?.file_mb || 500}MB`);
+  items = items.filter(x => x.file.size <= max);
+  upQ.push(...items); upTotal += items.length; upAll += items.reduce((a, x) => a + x.file.size, 0);
+  pumpUp();
+}
+function upShow() {
+  const on = upBusy || upQ.length; $("#upbar").classList.toggle("on", !!on);
+  $("#uptxt").textContent = `Đang tải lên ${Math.min(upDone + 1, upTotal)}/${upTotal} video…`;
+  $("#upfill").style.width = (upAll ? upBytes / upAll * 100 : 0) + "%";
+}
+async function pumpUp() {
+  if (upBusy) return; upBusy = true;
+  window.onbeforeunload = () => "Đang tải lên, rời trang sẽ dừng lại.";
+  while (upQ.length) {
+    const {file, batch} = upQ.shift(), id = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    upShow();
+    try {
+      const CH = 32 * 1048576;
+      for (let off = 0; off < file.size || off === 0; off += CH) {
+        const q = new URLSearchParams({id, name: file.name, batch, offset: off, total: file.size});
+        const r = await fetch("/api/upload?" + q, {method: "POST", body: file.slice(off, off + CH)});
+        const j = await r.json(); if (j.error) throw new Error(j.error);
+        upBytes += Math.min(CH, file.size - off); upShow();
+        if (j.videos) { S = j; render(); }
+        if (file.size === 0) break;
+      }
+    } catch (e) { toast(e.message || "Tải lên lỗi"); }
+    upDone++;
+  }
+  upBusy = false; window.onbeforeunload = null;
+  toast(`Đã tải lên ${upDone} video, máy đang nhận diện…`);
+  upDone = upTotal = upBytes = upAll = 0; upShow();
+}
+$("#fFiles").onchange = e => { const b = stamp(); enqueue([...e.target.files].map(file => ({file, batch: b}))); e.target.value = ""; };
+$("#fDir").onchange = e => { enqueue([...e.target.files].map(file => ({file, batch: (file.webkitRelativePath || "").split("/").slice(-2, -1)[0] || stamp()}))); e.target.value = ""; };
+async function walk(entry, batch, out) {
+  if (entry.isFile) { out.push({file: await new Promise((res, rej) => entry.file(res, rej)), batch}); return; }
+  const rd = entry.createReader(); let all = [], got;
+  do { got = await new Promise((res, rej) => rd.readEntries(res, rej)); all = all.concat(got); } while (got.length);
+  for (const c of all) await walk(c, c.isDirectory ? c.name : entry.name, out);
+}
+let dragN = 0;
+window.addEventListener("dragenter", e => { if (!S.web || !e.dataTransfer?.types?.includes("Files")) return; e.preventDefault(); dragN++; $("#drop").classList.add("on"); });
+window.addEventListener("dragover", e => { if (S.web) e.preventDefault(); });
+window.addEventListener("dragleave", () => { if (--dragN <= 0) { dragN = 0; $("#drop").classList.remove("on"); } });
+window.addEventListener("drop", async e => {
+  if (!S.web) return; e.preventDefault(); dragN = 0; $("#drop").classList.remove("on");
+  const b = stamp(), out = [], entries = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return enqueue([...e.dataTransfer.files].map(file => ({file, batch: b})));
+  for (const en of entries) await walk(en, en.isDirectory ? en.name : b, out);
+  enqueue(out);
+});
 $("#btnClear").onclick = async () => {
   const pending = S.videos.filter(v => needsExport(v) && (v.reviewed || edited(v))).length;
-  if (!confirm("Xoá toàn bộ danh sách thư mục khỏi công cụ?" + (pending ? `\n${pending} video đã duyệt/chỉnh nhưng chưa xuất sẽ mất thay đổi.` : "") + "\n(Không xoá file nào trên máy.)")) return;
+  if (!confirm("Xoá toàn bộ danh sách thư mục khỏi công cụ?" + (pending ? `\n${pending} video đã duyệt/chỉnh nhưng chưa xuất sẽ mất thay đổi.` : "") + (S.web ? "\nToàn bộ video đã tải lên sẽ bị xoá khỏi máy chủ." : "\n(Không xoá file nào trên máy.)"))) return;
   S = await api("/api/clear", {}); sel = null; render();
 };
 $("#btnExportAll").onclick = async () => {
+  if (S.web && !S.videos.some(needsExport)) { location.href = "/api/zip"; return; }
   const todo = S.videos.filter(needsExport), notRev = todo.filter(v => !v.reviewed);
   if (notRev.length && !confirm(`Còn ${notRev.length} video chưa duyệt. Vẫn xuất cả ${todo.length} video?`)) return;
   S = await api("/api/export", {names: todo.map(v => v.id)}); render(); toast(`Đang xuất ${todo.length} video…`);

@@ -34,6 +34,14 @@ Gõ `/plugin` → **Marketplaces** → chọn `video-tools` → **Update marketp
 ```
 Muốn tự cập nhật: `/plugin` → Marketplaces → bật auto-update cho `video-tools`.
 
+## Bản web (cutpro.asia)
+Ngoài plugin, giao diện cắt còn chạy được như một trang web: người dùng kéo thả video lên, duyệt chỗ cắt rồi tải bản đã cắt về (.zip), không cần cài gì.
+
+- Bật: `CAT_TUTORIAL_WEB=1` (xem `scripts/web.sh`), nghe ở `127.0.0.1:8790`, mở ra Internet bằng Cloudflare Tunnel — không mở cổng router.
+- Mỗi trình duyệt một khu riêng (cookie ngẫu nhiên); các lệnh đọc ổ đĩa máy chủ (chọn/dán thư mục, mở Finder) bị tắt.
+- Giới hạn mặc định: 500MB/video, 5GB/người, chừa 10GB ổ trống, tự xoá sau 24 giờ. Đổi bằng `CAT_TUTORIAL_MAX_FILE_MB`, `CAT_TUTORIAL_MAX_WS_GB`, `CAT_TUTORIAL_MIN_FREE_GB`, `CAT_TUTORIAL_TTL_H`.
+- Video được tải lên theo mảnh 32MB vì Cloudflare (gói Free) chặn request >100MB.
+
 ## Dành cho người bảo trì
 - Code skill: `plugins/cat-tutorial/skills/cat-tutorial/` (`SKILL.md`, `scripts/`, `references/`).
 - Mỗi lần phát hành: sửa code → **tăng `version`** trong `plugins/cat-tutorial/.claude-plugin/plugin.json` (vd 1.0.0 → 1.0.1) → commit → push. Không tăng version thì máy mọi người vẫn giữ bản cũ.
