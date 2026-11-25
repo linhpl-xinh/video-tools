@@ -1,0 +1,6 @@
+pillow>=11
+numpy>=2
+torch>=2.9
+open_clip_torch>=3
+# chỉ cần cho chế độ CAT_TUTORIAL_BACKEND=claude
+anthropic>=2.11

@@ -1,0 +1,11 @@
+{
+  "name": "video-tools",
+  "owner": { "name": "__ORG__" },
+  "plugins": [
+    {
+      "name": "cat-tutorial",
+      "source": "./plugins/cat-tutorial",
+      "description": "Tự nhận diện và cắt bỏ đoạn in-app / tutorial khỏi hàng loạt video, có giao diện duyệt và bước soát từng mối cắt."
+    }
+  ]
+}
