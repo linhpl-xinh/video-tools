@@ -8,22 +8,16 @@ Hiện có 1 plugin:
 
 ## Cài đặt (mỗi người làm 1 lần)
 
-**1. Cho máy quyền đọc repo private này** (Claude Code tải plugin bằng git của máy, không tự hỏi mật khẩu):
-```bash
-brew install gh
-gh auth login          # chọn GitHub.com → HTTPS → đăng nhập bằng trình duyệt
-gh auth setup-git
-```
-Tài khoản GitHub của bạn phải được thêm vào organization/repo này.
+Repo công khai, không cần tài khoản hay đăng nhập GitHub.
 
-**2. Thêm marketplace và cài plugin** — gõ trong ô chat của Claude Code:
+**1. Thêm marketplace và cài plugin** — gõ trong ô chat của Claude Code:
 ```
 /plugin marketplace add linhpl-xinh/video-tools
 /plugin install cat-tutorial@video-tools
 ```
 (Hoặc ngoài terminal: `claude plugin marketplace add linhpl-xinh/video-tools` rồi `claude plugin install cat-tutorial@video-tools`.)
 
-**3. Dùng** — nói bình thường với Claude, ví dụ:
+**2. Dùng** — nói bình thường với Claude, ví dụ:
 - "Cắt phần in-app tutorial ra khỏi các video trong thư mục ~/Downloads/PN.1911"
 - "Mở giao diện để mình tự duyệt chỗ cắt cho 2 thư mục này"
 - "Video tải từ Drive bị mất đuôi .mp4, sửa giúp"
