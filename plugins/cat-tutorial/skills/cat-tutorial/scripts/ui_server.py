@@ -334,6 +334,7 @@ def upload_chunk(ws: str, q: dict, rfile, length: int) -> bool:
     if length > 64 * 2**20 or offset + length > total:
         raise ValueError("Mảnh tải lên không hợp lệ")
     root = ws_dir(ws)
+    root.mkdir(parents=True, exist_ok=True)
     tmp = root / f".up_{up}"
     if offset == 0:
         if not re.search(r"\.(mp4|mov|m4v|webm|mkv|avi)$", name, re.I) and not name.endswith("_"):
@@ -493,8 +494,8 @@ class H(BaseHTTPRequestHandler):
             ws = secrets.token_hex(16)
             self._newws = ws
         d = ws_dir(ws)
-        d.mkdir(parents=True, exist_ok=True)
-        os.utime(d)  # còn dùng -> chưa bị dọn
+        if d.exists():
+            os.utime(d)  # còn dùng -> chưa bị dọn (thư mục chỉ được tạo khi tải video lên)
         self._wsid = ws
         return ws
 
