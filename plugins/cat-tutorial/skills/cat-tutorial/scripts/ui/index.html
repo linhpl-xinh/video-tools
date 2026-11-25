@@ -103,6 +103,12 @@ main{overflow:auto;min-height:0;container-type:inline-size}
 .upbar.on{display:block}
 .upbar .bar{height:6px;border-radius:4px;background:rgba(0,0,0,.08);overflow:hidden;margin-top:8px}
 .upbar .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.dz{border:2px dashed var(--accent);border-radius:18px;padding:22px 18px;margin:4px 0 16px;background:rgba(255,255,255,.18)}
+.dz b.k{display:inline-block;padding:1px 7px;border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;font-size:12px;background:var(--solid,#fff)}
+.dz ol{text-align:left;margin:8px auto 0;padding-left:22px;max-width:340px;color:var(--muted);font-size:14px}
+.tip{position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:36;max-width:min(520px,calc(100vw - 32px));background:var(--solid,#fff);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:12px 14px;font-size:14px;display:none;gap:10px;align-items:flex-start}
+.tip.on{display:flex}
+.tip button{flex:none}
 .webnote{font-size:12.5px;color:var(--muted);margin-top:14px}
 .empty .btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .empty input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:8px 11px;font:inherit}
@@ -307,7 +313,8 @@ button:not(.primary):not(.ok):hover{background:var(--hover)!important}
 <div class="toast" id="toast"></div>
 <input type="file" id="fFiles" multiple accept="video/*,.mp4,.mov,.m4v,.webm,.mkv" hidden>
 <input type="file" id="fDir" webkitdirectory multiple hidden>
-<div class="drop" id="drop"><div>Thả video hoặc thư mục vào đây</div></div>
+<div class="drop" id="drop"><div>Thả các thư mục hoặc video vào đây</div></div>
+<div class="tip" id="tip"><div>💡 <b>Muốn chọn nhiều thư mục?</b> Hộp chọn của trình duyệt chỉ nhận 1 thư mục mỗi lần. Hãy mở <span class="osname"></span>, giữ <b class="key"></b> bấm chọn các thư mục, rồi <b>kéo cả cụm thả vào trang này</b>.</div><button class="sm" id="tipOk">Đã hiểu</button></div>
 <div class="upbar" id="upbar"><div id="uptxt"></div><div class="bar"><i id="upfill"></i></div></div>
 <div class="offline" id="offline"><div class="box"><div style="font-size:30px">🔌</div><h2>Công cụ đã tắt</h2>
   <p>Kéo thư mục lên icon <b>Cat Tutorial</b> (hoặc mở app) để bật lại — trang này tự kết nối lại, danh sách và chỗ đã duyệt vẫn còn.</p></div></div>
@@ -402,10 +409,12 @@ function renderEmpty() {
     const L = S.limits || {};
     $("#main").innerHTML = `<div class="empty"><div class="box"><div class="ic">🎞️</div>
       <h2>Tải video lên để bắt đầu</h2>
-      <p>Kéo thả <b>nhiều thư mục cùng lúc</b> (hoặc video lẻ) vào trang này. Máy tự tìm đoạn in-app / tutorial, bạn duyệt lại rồi tải bản đã cắt về.</p>
-      <div class="btns"><button class="primary" onclick="$('#fDir').click()">Chọn thư mục…</button>
+      <p>Máy tự tìm đoạn in-app / tutorial, bạn duyệt lại rồi tải bản đã cắt về.</p>
+      <div class="dz"><b>Tải nhiều thư mục cùng lúc</b>
+        <ol><li>Mở ${OS.name}</li><li>Giữ <b class="k">${OS.key}</b> và bấm chọn các thư mục</li><li>Kéo cả cụm thả vào khung này</li></ol></div>
+      <div class="btns"><button class="primary" onclick="pickDir()">Chọn 1 thư mục…</button>
       <button class="btn" onclick="$('#fFiles').click()">Chọn video…</button></div>
-      <div class="webnote">Nhiều thư mục: chọn <b>thư mục cha</b> chứa chúng — mỗi thư mục con thành một nhóm riêng.</div>
+      <div class="webnote">Chọn <b>thư mục cha</b> thì mọi thư mục con bên trong được tải lên, mỗi thư mục con thành một nhóm riêng.</div>
       <div class="webnote">Tối đa ${L.file_mb || 500}MB mỗi video, ${L.ws_gb || 5}GB mỗi phiên. Video chỉ bạn thấy và tự xoá sau ${L.ttl_h || 24} giờ.</div>
     </div></div>`;
     return;
@@ -729,7 +738,15 @@ $("#btnReveal").onclick = () => {
   if (!S.videos.some(v => v.status === "done")) return toast("Chưa có video nào đã xuất");
   location.href = "/api/zip" + (view === "one" && V(sel) ? "?folder=" + encodeURIComponent(V(sel).folder) : "");
 };
-$("#btnDirTop").onclick = () => $("#fDir").click();
+const OS = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? {name: "Finder", key: "⌘ Command"} : {name: "File Explorer", key: "Ctrl"};
+document.querySelector("#tip .osname").textContent = OS.name; document.querySelector("#tip .key").textContent = OS.key;
+function pickDir() {
+  let seen = false; try { seen = localStorage.getItem("ct-tip-multi") === "1"; } catch (e) {}
+  if (!seen) { $("#tip").classList.add("on"); clearTimeout(pickDir._h); pickDir._h = setTimeout(() => $("#tip").classList.remove("on"), 15000); }
+  $("#fDir").click();
+}
+$("#tipOk").onclick = () => { $("#tip").classList.remove("on"); try { localStorage.setItem("ct-tip-multi", "1"); } catch (e) {} };
+$("#btnDirTop").onclick = pickDir;
 
 /* ---------------- web: tải lên ---------------- */
 let webSet = false;
