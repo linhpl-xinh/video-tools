@@ -33,11 +33,21 @@ robocopy $Scripts $App /MIR /XD __pycache__ /NFL /NDL /NJH /NJS | Out-Null
 & "$Venv\Scripts\python.exe" -c "import sys; sys.path.insert(0, r'$App'); import local_detect; local_detect._load(); print('   model sẵn sàng')"
 
 Step "4/6 Khoá đường hầm Cloudflare"
+New-Item -ItemType Directory -Force $CfDir | Out-Null
 $json = Get-ChildItem $CfDir -Filter *.json -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $json) {
-  Write-Host "   Chưa thấy file khoá (.json) trong $CfDir" -ForegroundColor Yellow
-  Write-Host "   Chép file <TUNNEL_ID>.json từ USB vào $CfDir rồi chạy lại file cài." -ForegroundColor Yellow
-  exit 1
+  # Không chép khoá từ máy cũ -> tạo đường hầm mới ngay trên máy này và trỏ cutpro.asia về đây.
+  if (-not (Test-Path (Join-Path $CfDir "cert.pem"))) {
+    Write-Host "   Trình duyệt sẽ mở trang Cloudflare: đăng nhập, bấm cutpro.asia rồi bấm Authorize." -ForegroundColor Yellow
+    cloudflared tunnel login
+    if (-not (Test-Path (Join-Path $CfDir "cert.pem"))) { throw "Chưa Authorize Cloudflare - chạy lại file cài." }
+  }
+  $name = "cutpro-" + $env:COMPUTERNAME.ToLower()
+  cloudflared tunnel create $name
+  $json = Get-ChildItem $CfDir -Filter *.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  cloudflared tunnel route dns --overwrite-dns $json.BaseName cutpro.asia
+  cloudflared tunnel route dns --overwrite-dns $json.BaseName www.cutpro.asia
+  Write-Host "   cutpro.asia giờ trỏ về máy này (đường hầm $name)." -ForegroundColor Green
 }
 $tid = $json.BaseName
 @"
