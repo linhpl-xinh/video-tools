@@ -14,6 +14,9 @@ python3 -m venv ~/.cat-tutorial/venv
 ```
 Rồi cài `cloudflared`, chép khoá đường hầm sang (hoặc tạo đường hầm mới và `cloudflared tunnel route dns`), dùng `cloudflared-config.example.yml` và `sudo cloudflared service install`. Bật web bằng `cutpro-web.service`.
 
+## Windows (máy bàn)
+Xem [windows/README.md](windows/README.md) — chạy `windows\CAI DAT.cmd`.
+
 ## macOS (đang dùng tạm)
 - Bản chạy: `~/.cat-tutorial/app` (chép từ `scripts/`, vì launchd hay bị chặn đọc ~/Downloads).
 - Tự bật: `~/Library/LaunchAgents/asia.cutpro.web.plist` (chạy `web.sh` kèm `caffeinate -is`) và `asia.cutpro.tunnel.plist` (`cloudflared tunnel run cutpro`).

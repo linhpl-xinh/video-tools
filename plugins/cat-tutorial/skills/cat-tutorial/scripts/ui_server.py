@@ -78,7 +78,7 @@ def from_pub(s: str, ws: str | None) -> str | None:
 
 
 def _safe_name(s: str, fallback: str) -> str:
-    s = re.sub(r"[\x00-\x1f/\\:]", "_", (s or "").strip()).strip(". ")
+    s = re.sub(r'[\x00-\x1f/\\:<>"|?*]', "_", (s or "").strip()).strip(". ")  # gồm ký tự Windows cấm
     return s[:120] or fallback
 
 
