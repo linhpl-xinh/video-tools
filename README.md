@@ -18,10 +18,10 @@ Tài khoản GitHub của bạn phải được thêm vào organization/repo nà
 
 **2. Thêm marketplace và cài plugin** — gõ trong ô chat của Claude Code:
 ```
-/plugin marketplace add __ORG__/__REPO__
+/plugin marketplace add linhpl-xinh/video-tools
 /plugin install cat-tutorial@video-tools
 ```
-(Hoặc ngoài terminal: `claude plugin marketplace add __ORG__/__REPO__` rồi `claude plugin install cat-tutorial@video-tools`.)
+(Hoặc ngoài terminal: `claude plugin marketplace add linhpl-xinh/video-tools` rồi `claude plugin install cat-tutorial@video-tools`.)
 
 **3. Dùng** — nói bình thường với Claude, ví dụ:
 - "Cắt phần in-app tutorial ra khỏi các video trong thư mục ~/Downloads/PN.1911"

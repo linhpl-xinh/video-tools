@@ -1,6 +1,6 @@
 {
   "name": "video-tools",
-  "owner": { "name": "__ORG__" },
+  "owner": { "name": "linhpl-xinh" },
   "plugins": [
     {
       "name": "cat-tutorial",
