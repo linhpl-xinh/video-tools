@@ -292,10 +292,10 @@ button:not(.primary):not(.ok):hover{background:var(--hover)!important}
     <div class="switch" id="viewSw"><button data-view="one" class="on">Từng video</button><button data-view="all">Tổng quan</button></div>
     <div class="spacer"></div>
     <span class="hinfo" id="hinfo"></span>
+    <button class="sm" id="btnDirTop" style="display:none" title="Chọn 1 thư mục, hoặc thư mục cha để tải mọi thư mục con bên trong">+ Thư mục</button>
     <button class="sm" id="btnPick">+ Thêm thư mục</button>
     <div class="menu" id="hmenu"><button class="ico" id="bHMenu" title="Thêm">⋯</button><div class="pop">
       <button id="btnReveal">Mở thư mục kết quả</button>
-      <button id="btnDir" style="display:none">Tải lên cả thư mục…</button>
       <hr><button id="btnClear" class="danger">Xoá danh sách (bắt đầu mới)</button></div></div>
     <button class="primary sm" id="btnExportAll" disabled>Xuất video</button>
   </header>
@@ -402,9 +402,10 @@ function renderEmpty() {
     const L = S.limits || {};
     $("#main").innerHTML = `<div class="empty"><div class="box"><div class="ic">🎞️</div>
       <h2>Tải video lên để bắt đầu</h2>
-      <p>Kéo thả video hoặc cả thư mục vào trang này. Máy sẽ tự tìm đoạn in-app / tutorial, bạn duyệt lại rồi tải bản đã cắt về.</p>
-      <div class="btns"><button class="primary" onclick="$('#fFiles').click()">Chọn video…</button>
-      <button class="btn" onclick="$('#fDir').click()">Chọn thư mục…</button></div>
+      <p>Kéo thả <b>nhiều thư mục cùng lúc</b> (hoặc video lẻ) vào trang này. Máy tự tìm đoạn in-app / tutorial, bạn duyệt lại rồi tải bản đã cắt về.</p>
+      <div class="btns"><button class="primary" onclick="$('#fDir').click()">Chọn thư mục…</button>
+      <button class="btn" onclick="$('#fFiles').click()">Chọn video…</button></div>
+      <div class="webnote">Nhiều thư mục: chọn <b>thư mục cha</b> chứa chúng — mỗi thư mục con thành một nhóm riêng.</div>
       <div class="webnote">Tối đa ${L.file_mb || 500}MB mỗi video, ${L.ws_gb || 5}GB mỗi phiên. Video chỉ bạn thấy và tự xoá sau ${L.ttl_h || 24} giờ.</div>
     </div></div>`;
     return;
@@ -728,15 +729,16 @@ $("#btnReveal").onclick = () => {
   if (!S.videos.some(v => v.status === "done")) return toast("Chưa có video nào đã xuất");
   location.href = "/api/zip" + (view === "one" && V(sel) ? "?folder=" + encodeURIComponent(V(sel).folder) : "");
 };
-$("#btnDir").onclick = () => $("#fDir").click();
+$("#btnDirTop").onclick = () => $("#fDir").click();
 
 /* ---------------- web: tải lên ---------------- */
 let webSet = false;
 function webChrome() {
   if (!S.web || webSet) return; webSet = true;
-  $("#btnPick").textContent = "+ Tải video lên";
+  $("#btnPick").textContent = "+ Video";
+  $("#btnPick").title = "Chọn một hoặc nhiều file video";
   $("#btnReveal").textContent = "Tải video đã cắt (.zip)";
-  $("#btnDir").style.display = "";
+  $("#btnDirTop").style.display = "";
   $("#offline .box").innerHTML = `<div style="font-size:30px">🔌</div><h2>Mất kết nối máy chủ</h2><p>Máy chủ đang tắt hoặc mạng bị gián đoạn. Trang sẽ tự kết nối lại.</p>`;
 }
 const VIDRE = /\.(mp4|mov|m4v|webm|mkv|avi)$|_$/i;
@@ -748,6 +750,8 @@ function enqueue(items) {
   const max = (S.limits?.file_mb || 500) * 1048576, big = items.filter(x => x.file.size > max);
   if (big.length) toast(`Bỏ qua ${big.length} video lớn hơn ${S.limits?.file_mb || 500}MB`);
   items = items.filter(x => x.file.size <= max);
+  const nf = new Set(items.map(x => x.batch)).size;
+  if (nf > 1) toast(`Đang tải ${items.length} video từ ${nf} thư mục…`);
   upQ.push(...items); upTotal += items.length; upAll += items.reduce((a, x) => a + x.file.size, 0);
   pumpUp();
 }
@@ -780,12 +784,22 @@ async function pumpUp() {
   upDone = upTotal = upBytes = upAll = 0; upShow();
 }
 $("#fFiles").onchange = e => { const b = stamp(); enqueue([...e.target.files].map(file => ({file, batch: b}))); e.target.value = ""; };
-$("#fDir").onchange = e => { enqueue([...e.target.files].map(file => ({file, batch: (file.webkitRelativePath || "").split("/").slice(-2, -1)[0] || stamp()}))); e.target.value = ""; };
+const skipPath = parts => parts.some(x => x === OUTDIR || x.startsWith("."));
+const OUTDIR = "da_cat_tutorial";
+$("#fDir").onchange = e => {
+  const items = [];
+  for (const file of e.target.files) {
+    const parts = (file.webkitRelativePath || file.name).split("/");
+    if (skipPath(parts)) continue;
+    items.push({file, batch: parts.length > 1 ? parts[parts.length - 2] : stamp()});
+  }
+  enqueue(items); e.target.value = "";
+};
 async function walk(entry, batch, out) {
   if (entry.isFile) { out.push({file: await new Promise((res, rej) => entry.file(res, rej)), batch}); return; }
   const rd = entry.createReader(); let all = [], got;
   do { got = await new Promise((res, rej) => rd.readEntries(res, rej)); all = all.concat(got); } while (got.length);
-  for (const c of all) await walk(c, c.isDirectory ? c.name : entry.name, out);
+  for (const c of all) { if (c.name === OUTDIR || c.name.startsWith(".")) continue; await walk(c, c.isDirectory ? c.name : entry.name, out); }
 }
 let dragN = 0;
 window.addEventListener("dragenter", e => { if (!S.web || !e.dataTransfer?.types?.includes("Files")) return; e.preventDefault(); dragN++; $("#drop").classList.add("on"); });
