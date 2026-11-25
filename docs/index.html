@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cắt Tutorial</title>
+<meta name="description" content="Plugin cho Claude Code: tự nhận diện và cắt bỏ đoạn in-app / tutorial khỏi hàng loạt video. Chạy trên máy, không cần API key.">
+<meta property="og:title" content="Cắt Tutorial – plugin cho Claude Code">
+<meta property="og:description" content="Kéo thả thư mục video, AI tự tìm đoạn quay điện thoại / hướng dẫn app và cắt bỏ. Chạy offline, miễn phí.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e5484d'/><path d='M10 9l12 14M22 9L10 23' stroke='white' stroke-width='3' stroke-linecap='round'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fbfaf8; --bg2:#f3f1ed; --card:#ffffff; --ink:#1b1a18; --ink2:#5d5a54; --ink3:#8c8880;
+  --line:#e6e2db; --accent:#e5484d; --accent-ink:#ffffff; --accent-soft:#fde8e8;
+  --keep:#2f9e6a; --keep-soft:#dff3e9; --cut:#e5484d; --cut-soft:#fde3e3;
+  --code-bg:#1f1d1a; --code-ink:#f2efe9; --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 30px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141312; --bg2:#1b1a18; --card:#1f1e1c; --ink:#f1eee8; --ink2:#b3aea5; --ink3:#857f76;
+    --line:#2e2c29; --accent:#ff6369; --accent-ink:#1b0a0b; --accent-soft:#3a1d1e;
+    --keep:#4cc38a; --keep-soft:#173327; --cut:#ff6369; --cut-soft:#3a1d1e;
+    --code-bg:#0d0c0b; --code-ink:#f2efe9; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141312; --bg2:#1b1a18; --card:#1f1e1c; --ink:#f1eee8; --ink2:#b3aea5; --ink3:#857f76;
+  --line:#2e2c29; --accent:#ff6369; --accent-ink:#1b0a0b; --accent-soft:#3a1d1e;
+  --keep:#4cc38a; --keep-soft:#173327; --cut:#ff6369; --cut-soft:#3a1d1e;
+  --code-bg:#0d0c0b; --code-ink:#f2efe9; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Be Vietnam Pro",system-ui,-apple-system,sans-serif;font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+
+/* nav */
+nav{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;gap:20px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;text-decoration:none}
+.logo{width:28px;height:28px;border-radius:8px;background:var(--accent);display:grid;place-items:center}
+.logo svg{width:16px;height:16px}
+nav .links{margin-left:auto;display:flex;gap:22px;font-size:15px;color:var(--ink2)}
+nav .links a{text-decoration:none}
+nav .links a:hover{color:var(--ink)}
+.gh{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink)!important;font-weight:500}
+.gh svg{width:16px;height:16px}
+
+/* hero */
+.hero{padding:84px 0 40px;text-align:center}
+.pill{display:inline-flex;gap:8px;align-items:center;padding:5px 12px;border-radius:999px;background:var(--keep-soft);color:var(--keep);font-size:14px;font-weight:600}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--keep);display:block}
+h1{font-size:clamp(38px,6vw,64px);line-height:1.08;letter-spacing:-.025em;margin:20px auto 18px;font-weight:800;max-width:820px}
+h1 em{font-style:normal;color:var(--accent)}
+.lede{font-size:clamp(17px,2vw,20px);color:var(--ink2);max-width:640px;margin:0 auto 34px}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:12px;font-weight:600;text-decoration:none;font-size:16px;border:1px solid transparent}
+.btn.primary{background:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.ghost{border-color:var(--line);background:var(--card)}
+
+/* mock */
+.mock{margin:56px auto 0;max-width:960px;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden;text-align:left}
+.mock-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
+.mock-bar i{width:11px;height:11px;border-radius:50%;background:var(--line);display:block}
+.mock-bar span{margin-left:12px;font-size:13px;color:var(--ink3)}
+.mock-body{display:grid;grid-template-columns:210px 1fr;min-height:340px}
+.side{border-right:1px solid var(--line);padding:16px 12px;font-size:13.5px}
+.side h6{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.folder{padding:8px 10px;border-radius:9px;margin-bottom:4px;display:flex;justify-content:space-between;color:var(--ink2)}
+.folder.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
+.folder b{font-weight:500;color:var(--ink3);font-size:12px}
+.main{padding:18px}
+.main-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px}
+.main-head strong{font-size:15px}
+.exp{font-size:13px;font-weight:600;background:var(--accent);color:var(--accent-ink);padding:6px 12px;border-radius:8px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.vcard{border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--bg)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.thumb{aspect-ratio:9/12;border-radius:7px;position:relative;overflow:hidden}
+.thumb.k{background:linear-gradient(160deg,#f7c59f,#e98a7f 55%,#9a5b8c)}
+.thumb.k2{background:linear-gradient(160deg,#a8d8c9,#5aa0a8 60%,#2f5d7c)}
+.thumb.k3{background:linear-gradient(160deg,#f5e1a4,#d9a05b 55%,#8a5a3b)}
+.thumb.c{background:#2a2826}
+.thumb.c::before{content:"";position:absolute;inset:14% 22%;border-radius:9px;border:2px solid #57534d;background:#3a3734}
+.thumb.c::after{content:"";position:absolute;left:36%;right:36%;top:60%;height:9%;border-radius:4px;background:var(--cut)}
+.tag{position:absolute;left:5px;top:5px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:5px;color:#fff}
+.tag.k{background:var(--keep)} .tag.c{background:var(--cut)}
+.tl{margin-top:9px;height:7px;border-radius:5px;background:var(--cut-soft);position:relative;overflow:hidden}
+.tl i{position:absolute;left:0;top:0;bottom:0;background:var(--keep);border-radius:5px}
+.vmeta{display:flex;justify-content:space-between;margin-top:7px;font-size:12px;color:var(--ink3)}
+.vmeta .ok{color:var(--keep);font-weight:600}
+
+/* sections */
+section{padding:84px 0}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+h2{font-size:clamp(28px,4vw,40px);letter-spacing:-.02em;line-height:1.15;margin:0 0 14px;font-weight:800}
+.sub{color:var(--ink2);max-width:620px;margin:0 0 40px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px}
+.num{width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent);font-weight:800;display:grid;place-items:center;margin-bottom:14px}
+.step h3{margin:0 0 6px;font-size:19px}
+.step p{margin:0;color:var(--ink2);font-size:15.5px}
+
+.alt{background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.install{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start}
+.code{background:var(--code-bg);color:var(--code-ink);border-radius:14px;padding:6px;font-size:14.5px}
+.line{display:flex;align-items:center;gap:10px;padding:12px 12px 12px 16px;border-radius:9px}
+.line+.line{border-top:1px solid rgba(255,255,255,.07)}
+.line .p{color:#ff8a8e}
+.line code{flex:1;overflow-x:auto;white-space:nowrap}
+.copy{flex:none;font:inherit;font-family:"Be Vietnam Pro",sans-serif;font-size:12.5px;font-weight:600;color:var(--code-ink);background:rgba(255,255,255,.1);border:0;border-radius:7px;padding:6px 10px;cursor:pointer}
+.copy:hover{background:rgba(255,255,255,.18)}
+.note{font-size:14.5px;color:var(--ink2);margin-top:14px}
+.note code{font-size:13px;background:var(--card);border:1px solid var(--line);padding:1px 6px;border-radius:6px}
+ol.req{margin:0;padding-left:20px;color:var(--ink2)}
+ol.req li{margin-bottom:10px}
+ol.req b{color:var(--ink)}
+
+.chat{display:grid;gap:12px}
+.bubble{background:var(--card);border:1px solid var(--line);border-radius:16px 16px 16px 4px;padding:14px 18px;font-size:16px}
+.bubble small{display:block;color:var(--ink3);font-size:13px;margin-top:4px}
+
+.feats{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+.feat{display:flex;gap:16px;padding:22px;border:1px solid var(--line);border-radius:16px;background:var(--card)}
+.ico{flex:none;width:42px;height:42px;border-radius:12px;background:var(--bg2);display:grid;place-items:center}
+.ico svg{width:21px;height:21px;stroke:var(--ink);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.feat h3{margin:2px 0 4px;font-size:17px}
+.feat p{margin:0;color:var(--ink2);font-size:15px}
+
+.limits{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.lim{border-left:3px solid var(--accent);padding:4px 0 4px 18px}
+.lim h3{margin:0 0 4px;font-size:17px}
+.lim p{margin:0;color:var(--ink2);font-size:15px}
+
+details{border-bottom:1px solid var(--line);padding:18px 0}
+summary{cursor:pointer;font-weight:600;font-size:17px;list-style:none;display:flex;justify-content:space-between;gap:16px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";color:var(--ink3);font-weight:400;font-size:22px;line-height:1}
+details[open] summary::after{content:"–"}
+details p{color:var(--ink2);margin:10px 0 0;font-size:15.5px}
+
+footer{padding:40px 0 60px;color:var(--ink3);font-size:14px;border-top:1px solid var(--line)}
+footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+
+@media (max-width:860px){
+  .steps,.feats,.limits,.install{grid-template-columns:1fr}
+  .mock-body{grid-template-columns:1fr}
+  .side{display:none}
+  .grid{grid-template-columns:repeat(2,1fr)}
+  .grid .vcard:nth-child(3){display:none}
+  nav .links a:not(.gh){display:none}
+  section{padding:64px 0}
+  .hero{padding-top:56px}
+}
+@media (max-width:480px){
+  .wrap{padding:0 16px}
+  .grid{grid-template-columns:1fr}
+  .grid .vcard:nth-child(2){display:none}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <span class="logo"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg></span>
+      Cắt Tutorial
+    </a>
+    <div class="links">
+      <a href="#cach-hoat-dong">Cách hoạt động</a>
+      <a href="#cai-dat">Cài đặt</a>
+      <a href="#hoi-dap">Hỏi đáp</a>
+      <a class="gh" href="https://github.com/linhpl-xinh/video-tools">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="pill"><i></i>Miễn phí · dùng trên web hoặc trên máy · không cần API key</span>
+    <h1>Bỏ đoạn <em>in-app tutorial</em> khỏi cả trăm video, chỉ bằng một câu nói</h1>
+    <p class="lede">Plugin cho Claude Code. AI tự tìm đoạn quay điện thoại, hướng dẫn bấm app, logo app và cảnh chuyển dẫn vào, cắt sạch rồi xuất video mới. Bạn chỉ cần duyệt lại.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://cutpro.asia">Dùng ngay trên web →</a>
+      <a class="btn ghost" href="#cai-dat">Cài vào Claude Code</a>
+    </div>
+
+    <div class="mock" aria-label="Mô phỏng giao diện duyệt">
+      <div class="mock-bar"><i></i><i></i><i></i><span>Cắt Tutorial — Tổng quan</span></div>
+      <div class="mock-body">
+        <div class="side">
+          <h6>Thư mục</h6>
+          <div class="folder on">Chiến dịch tháng 12 <b>20</b></div>
+          <div class="folder">Bộ ảnh Tết <b>14</b></div>
+          <div class="folder">Video thử nghiệm <b>6</b></div>
+        </div>
+        <div class="main">
+          <div class="main-head"><strong>20 video · 18 đã duyệt</strong><span class="exp">Xuất tất cả</span></div>
+          <div class="grid">
+            <div class="vcard">
+              <div class="pair"><div class="thumb k"><span class="tag k">GIỮ</span></div><div class="thumb c"><span class="tag c">CẮT</span></div></div>
+              <div class="tl"><i style="width:62%"></i></div>
+              <div class="vmeta"><span class="mono">0:00–0:09.4</span><span class="ok">✓ Đã duyệt</span></div>
+            </div>
+            <div class="vcard">
+              <div class="pair"><div class="thumb k2"><span class="tag k">GIỮ</span></div><div class="thumb c"><span class="tag c">CẮT</span></div></div>
+              <div class="tl"><i style="width:71%"></i></div>
+              <div class="vmeta"><span class="mono">0:00–0:11.2</span><span class="ok">✓ Đã duyệt</span></div>
+            </div>
+            <div class="vcard">
+              <div class="pair"><div class="thumb k3"><span class="tag k">GIỮ</span></div><div class="thumb c"><span class="tag c">CẮT</span></div></div>
+              <div class="tl"><i style="width:55%"></i></div>
+              <div class="vmeta"><span class="mono">0:00–0:07.8</span><span>Chờ duyệt</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="cach-hoat-dong">
+  <div class="wrap">
+    <div class="eyebrow">Cách hoạt động</div>
+    <h2>Ba bước, phần lớn là máy làm</h2>
+    <p class="sub">Video kiểu "khoe hiệu ứng AI" thường có phần khoe kết quả rồi tới đoạn quay điện thoại hướng dẫn. Công cụ giữ phần đầu, bỏ phần sau. Không muốn cài gì? Vào <a href="https://cutpro.asia"><b>cutpro.asia</b></a>, kéo thả video lên và tải bản đã cắt về (.zip). Video chỉ bạn thấy, tự xoá sau 24 giờ.</p>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><h3>Đưa thư mục</h3><p>Nói với Claude đường dẫn thư mục, hoặc kéo thả nhiều thư mục vào giao diện. Thư mục cha có nhiều thư mục con cũng được.</p></div>
+      <div class="step"><div class="num">2</div><h3>AI tìm chỗ cắt</h3><p>Model nhận diện hình ảnh chấm từng khung, dò hiệu ứng chuyển cảnh, chừa thêm 2 khung an toàn. Khoảng 4 giây mỗi video.</p></div>
+      <div class="step"><div class="num">3</div><h3>Duyệt và xuất</h3><p>Xem cặp khung Giữ/Cắt của mọi video, chỉnh từng khung nếu cần. Video sạch nằm trong <code>da_cat_tutorial/</code> cạnh video gốc.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="cai-dat" class="alt">
+  <div class="wrap install">
+    <div>
+      <div class="eyebrow">Cài đặt</div>
+      <h2>Mỗi người làm một lần</h2>
+      <p class="sub" style="margin-bottom:24px">Mở Claude Code (ứng dụng Claude trên máy, tab Code, hoặc <code>claude</code> trong terminal) rồi gõ hai lệnh này vào ô chat.</p>
+      <div class="code">
+        <div class="line"><span class="p">›</span><code>/plugin marketplace add linhpl-xinh/video-tools</code><button class="copy" data-copy="/plugin marketplace add linhpl-xinh/video-tools">Chép</button></div>
+        <div class="line"><span class="p">›</span><code>/plugin install cat-tutorial@video-tools</code><button class="copy" data-copy="/plugin install cat-tutorial@video-tools">Chép</button></div>
+      </div>
+      <p class="note">Cập nhật bản mới: <code>/plugin marketplace update video-tools</code></p>
+    </div>
+    <div>
+      <div class="eyebrow">Cần có</div>
+      <ol class="req">
+        <li><b>Máy Mac</b> (Apple Silicon hoặc Intel).</li>
+        <li><b>Claude Code</b> đã đăng nhập.</li>
+        <li><b>Homebrew</b> để tự cài ffmpeg (<a href="https://brew.sh">brew.sh</a>).</li>
+        <li><b>~2GB trống</b> cho model nhận diện. Lần đầu dùng, Claude tự tải và cài trong vài phút.</li>
+      </ol>
+      <p class="note">Không cần tài khoản GitHub, không cần API key. Video không rời khỏi máy bạn.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Dùng thế nào</div>
+    <h2>Cứ nói bình thường</h2>
+    <p class="sub">Không cần nhớ lệnh. Claude tự nhận ra khi nào cần dùng công cụ.</p>
+    <div class="chat">
+      <div class="bubble">"Cắt phần in-app tutorial ra khỏi các video trong thư mục ~/Downloads/Chiến dịch tháng 12"<small>Claude cắt hết, soát từng mối cắt rồi báo lại video nào đã sửa tay.</small></div>
+      <div class="bubble">"Mở giao diện để mình tự duyệt chỗ cắt cho 2 thư mục này"<small>Mở giao diện duyệt trong trình duyệt, bạn kéo chỉnh và bấm Xuất.</small></div>
+      <div class="bubble">"Video tải từ Drive bị mất đuôi .mp4, sửa giúp"<small>Xem trước danh sách, hỏi bạn rồi mới đổi tên. Có nhật ký để hoàn tác.</small></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Tính năng</div>
+    <h2>Làm kỹ ở chỗ hay sai</h2>
+    <p class="sub" style="margin-bottom:32px">Trên lô thử 20 video, điểm cắt khớp bản cắt tay ±1 khung ở 19 video.</p>
+    <div class="feats">
+      <div class="feat"><div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5M16 4v5"/></svg></div><div><h3>Tổng quan cả lô</h3><p>Mỗi video một thẻ với khung cuối được giữ và khung đầu bị cắt. Đánh dấu đã duyệt, trạng thái tự lưu.</p></div></div>
+      <div class="feat"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4"/></svg></div><div><h3>Chỉnh từng khung</h3><p>Kéo trên timeline, bấm ‹ › để lùi tiến 1 khung, phím I/O để cắt một đoạn ở giữa video.</p></div></div>
+      <div class="feat"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div><div><h3>Bước soát bắt buộc</h3><p>Claude xem lại khung cuối của từng video đã xuất. Lọt 1 khung mép điện thoại là cắt lại.</p></div></div>
+      <div class="feat"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div><div><h3>Riêng tư, offline</h3><p>Nhận diện chạy ngay trên máy. Không tải video lên đâu, không tốn phí theo lượt.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Giới hạn</div>
+    <h2>Những chỗ nên nghe lại</h2>
+    <p class="sub">Công cụ chỉ nhìn hình, nên có hai trường hợp bạn cần tự kiểm tra.</p>
+    <div class="limits">
+      <div class="lim"><h3>Lời đọc bắt đầu sớm</h3><p>Nếu giọng hướng dẫn bắt đầu khi còn ở cảnh khoe kết quả, video sẽ kết thúc giữa câu. Nghe lại vài giây cuối.</p></div>
+      <div class="lim"><h3>Cảnh mồi không có điện thoại</h3><p>Người thật nói "để mình chỉ cách làm" có thể còn sót một đoạn ngắn. Chỉnh lại trong giao diện.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="hoi-dap" class="alt">
+  <div class="wrap" style="max-width:760px">
+    <div class="eyebrow">Hỏi đáp</div>
+    <h2>Câu hỏi thường gặp</h2>
+    <details><summary>Có ghi đè video gốc không?</summary><p>Không. Video mới được xuất vào thư mục <code>da_cat_tutorial/</code> nằm cạnh video gốc. Nếu thư mục đó đã có file, Claude xuất sang tên khác hoặc hỏi bạn trước.</p></details>
+    <details><summary>Dùng trên Windows được không?</summary><p>Hiện tại công cụ được làm và thử trên macOS. Windows chưa được hỗ trợ.</p></details>
+    <details><summary>Video tải từ Google Drive không mở được?</summary><p>Khi tải nhiều file một lúc, Drive nén thành zip và có thể cắt mất đuôi <code>.mp4</code> ở tên dài. Công cụ vẫn cắt được, và Claude có thể đổi lại tên cho bạn sau khi hỏi.</p></details>
+    <details><summary>Nhận diện sai nhiều thì sao?</summary><p>Mở giao diện duyệt để chỉnh tay, hoặc bảo Claude chuyển sang chế độ dùng Claude API cho video khó (cần API key riêng).</p></details>
+    <details><summary>Làm sao cập nhật bản mới?</summary><p>Gõ <code>/plugin marketplace update video-tools</code> rồi <code>/plugin update cat-tutorial@video-tools</code>, hoặc bật tự cập nhật trong <code>/plugin</code> → Marketplaces.</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Cắt Tutorial · plugin cho Claude Code</span>
+    <a href="https://github.com/linhpl-xinh/video-tools">Mã nguồn trên GitHub</a>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('.copy').forEach(function(b){
+  b.addEventListener('click',function(){
+    var t=b.getAttribute('data-copy');
+    var done=function(){b.textContent='Đã chép';setTimeout(function(){b.textContent='Chép'},1500)};
+    if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){})}
+  });
+});
+</script>
+</body>
+</html>

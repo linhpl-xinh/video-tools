@@ -1,0 +1,16 @@
+# Linux (Ubuntu) – systemd. Chép vào /etc/systemd/system/, sửa User và đường dẫn, rồi:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cutpro-web
+[Unit]
+Description=Cat Tutorial web (cutpro.asia)
+After=network-online.target
+
+[Service]
+User=cutpro
+Environment=CAT_TUTORIAL_WEB=1
+Environment=CAT_TUTORIAL_PORT=8790
+ExecStart=/home/cutpro/.cat-tutorial/venv/bin/python -I /home/cutpro/app/ui_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

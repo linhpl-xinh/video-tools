@@ -41,6 +41,9 @@ Ngoài plugin, giao diện cắt còn chạy được như một trang web: ngư
 - Mỗi trình duyệt một khu riêng (cookie ngẫu nhiên); các lệnh đọc ổ đĩa máy chủ (chọn/dán thư mục, mở Finder) bị tắt.
 - Giới hạn mặc định: 500MB/video, 5GB/người, chừa 10GB ổ trống, tự xoá sau 24 giờ. Đổi bằng `CAT_TUTORIAL_MAX_FILE_MB`, `CAT_TUTORIAL_MAX_WS_GB`, `CAT_TUTORIAL_MIN_FREE_GB`, `CAT_TUTORIAL_TTL_H`.
 - Video được tải lên theo mảnh 32MB vì Cloudflare (gói Free) chặn request >100MB.
+- Cách cài lên máy chủ / máy Mac: [deploy/README.md](deploy/README.md).
+
+Dùng ngay: **https://cutpro.asia** · Trang giới thiệu: https://linhpl-xinh.github.io/video-tools/
 
 ## Dành cho người bảo trì
 - Code skill: `plugins/cat-tutorial/skills/cat-tutorial/` (`SKILL.md`, `scripts/`, `references/`).

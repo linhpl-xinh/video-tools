@@ -1,0 +1,10 @@
+# Chép thành ~/.cloudflared/config.yml rồi thay <TUNNEL_ID> bằng ID từ `cloudflared tunnel create cutpro`.
+# File <TUNNEL_ID>.json là KHOÁ đường hầm: giữ riêng trên máy chủ, không bao giờ commit.
+tunnel: <TUNNEL_ID>
+credentials-file: /HOME/.cloudflared/<TUNNEL_ID>.json
+ingress:
+  - hostname: cutpro.asia
+    service: http://127.0.0.1:8790
+  - hostname: www.cutpro.asia
+    service: http://127.0.0.1:8790
+  - service: http_status:404
