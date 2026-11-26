@@ -127,7 +127,7 @@ def _restore(vid: str, status: str):
 
 
 KEEP = ("id", "name", "folder", "segs", "auto_segs", "note", "reviewed", "exported_segs", "output",
-        "duration", "fps", "status")
+        "duration", "fps", "status", "wm", "wm_on")
 
 
 def save_session():
@@ -135,7 +135,7 @@ def save_session():
         data = {"groups": state["groups"],
                 "videos": [{k: state["videos"][i].get(k) for k in KEEP} for i in state["order"]]}
     tmp = SESSION.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False))
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     tmp.replace(SESSION)
 
 
@@ -149,7 +149,7 @@ def _heal(vid: str, folder: str) -> str | None:
 
 def load_session():
     try:
-        data = json.loads(SESSION.read_text())
+        data = json.loads(SESSION.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return
     todo = []
@@ -198,8 +198,9 @@ def _analyze(vid: str):
         info = ct.probe(src)
         _set(vid, duration=info["duration"], fps=info["fps"], info=info, **_sprite(vid, info))
         segs, note = ct.analyze(src, info, lambda m: None)
+        wm = ct.detect_wm(src, info, lambda m: None)
         segs = [[round(s, 4), round(e, 4)] for s, e in segs]
-        _set(vid, status="ready", segs=segs, auto_segs=[list(x) for x in segs], note=note)
+        _set(vid, status="ready", segs=segs, auto_segs=[list(x) for x in segs], note=note, wm=wm, wm_on=True)
         save_session()
     except Exception as ex:  # noqa: BLE001
         _set(vid, status="error", error=f"{type(ex).__name__}: {ex}")
@@ -216,7 +217,7 @@ def _export(vid: str):
             return
         out_dir = Path(v["folder"]) / ct.OUT_DIRNAME
         segs = [tuple(x) for x in v["segs"]]
-        info = v["info"]
+        info = dict(v["info"], wm=(v.get("wm") or []) if v.get("wm_on", True) else [])
         busy += 1
     try:
         _set(vid, status="exporting")
@@ -290,7 +291,7 @@ def public_state(ws: str | None = None) -> dict:
     with lock:
         vids = [{k: state["videos"][i].get(k) for k in (
             "id", "name", "folder", "status", "segs", "auto_segs", "note", "duration", "fps", "error",
-            "output", "sprite_n", "exported_segs", "reviewed")} for i in state["order"]
+            "output", "sprite_n", "exported_segs", "reviewed", "wm", "wm_on")} for i in state["order"]
             if _mine(state["videos"][i]["folder"], ws)]
         groups = [dict(g) for g in state["groups"] if _mine(g["folder"], ws)]
     if WEB:
@@ -404,6 +405,22 @@ def drop_folders(folders: list[str]):
     save_session()
 
 
+def reanalyze(folders: list[str] | None = None, vids: list[str] | None = None):
+    """Nhận diện lại từ đầu (xoá điểm cắt/duyệt cũ, giữ nguyên file). Bỏ qua video đang bận."""
+    with lock:
+        ids = [i for i in state["order"]
+               if (vids is not None and i in vids or folders is not None and state["videos"][i]["folder"] in folders)
+               and state["videos"][i]["status"] not in ("queued", "analyzing", "exporting")]
+        for i in ids:
+            v = state["videos"][i]
+            state["videos"][i] = {"id": i, "name": v["name"], "folder": v["folder"], "status": "queued",
+                                  "segs": [], "auto_segs": [], "note": "", "duration": 0, "fps": 30}
+    for i in ids:
+        _drop_cache(i)
+        analyze_pool.submit(_analyze, i)
+    save_session()
+
+
 def _janitor():
     while True:
         time.sleep(600)
@@ -430,11 +447,12 @@ def zip_outputs(folders: list[str]) -> Path | None:
     outs = [(f, o) for f, o in outs if Path(o).exists()]
     if not outs:
         return None
-    tmp = Path(tempfile.mkstemp(suffix=".zip", dir=CACHE)[1])
-    multi = len({f for f, _ in outs}) > 1
+    _fd, _p = tempfile.mkstemp(suffix=".zip", dir=CACHE)
+    os.close(_fd)  # Windows không xoá được file còn mở
+    tmp = Path(_p)
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
         for f, o in outs:
-            z.write(o, f"{Path(f).name}/{Path(o).name}" if multi else Path(o).name)
+            z.write(o, f"{Path(f).name}/{Path(o).name}")  # luôn phân loại theo thư mục tải lên
     return tmp
 
 
@@ -660,6 +678,19 @@ class H(BaseHTTPRequestHandler):
                 return self._json(public_state())
             if u.path == "/api/remove":
                 return self._json(remove_folder(body["folder"]))
+            if u.path == "/api/wm":
+                with lock:
+                    v = state["videos"][body["v"]]
+                    v["wm_on"] = bool(body.get("on", True))
+                    if v["status"] == "done":
+                        v["status"] = "ready"
+                save_session()
+                return self._json(public_state())
+            if u.path == "/api/reanalyze":
+                with lock:
+                    fs = [body["folder"]] if body.get("folder") else [g["folder"] for g in state["groups"]]
+                reanalyze(vids=[body["v"]] if body.get("v") else None, folders=None if body.get("v") else fs)
+                return self._json(public_state())
             if u.path == "/api/segs":
                 name = body["v"]
                 segs = sorted([[round(max(0.0, float(a)), 4), round(float(b), 4)] for a, b in body["segs"] if float(b) > float(a)])
@@ -712,6 +743,26 @@ class H(BaseHTTPRequestHandler):
             if f:
                 drop_folders([f])
             return self._json(public_state(ws))
+        if u.path == "/api/wm":
+            name = self._v(body.get("v", ""))
+            if name:
+                with lock:
+                    v = state["videos"][name]
+                    v["wm_on"] = bool(body.get("on", True))
+                    if v["status"] == "done":
+                        v["status"] = "ready"  # đổi che chữ -> cần xuất lại
+                save_session()
+            return self._json(public_state(ws))
+        if u.path == "/api/reanalyze":
+            if body.get("v"):
+                n = self._v(body["v"])
+                reanalyze(vids=[n] if n else [])
+            else:
+                f = self._folder(body.get("folder", "")) if body.get("folder") else None
+                with lock:
+                    fs = [f] if f else [g["folder"] for g in state["groups"] if _mine(g["folder"], ws)]
+                reanalyze(folders=fs)
+            return self._json(public_state(ws))
         if u.path == "/api/segs":
             name = self._v(body.get("v", ""))
             if not name:
@@ -746,7 +797,7 @@ class H(BaseHTTPRequestHandler):
 
 def _existing():
     try:
-        info = json.loads(PORT_FILE.read_text())
+        info = json.loads(PORT_FILE.read_text(encoding="utf-8"))
         url = f"http://127.0.0.1:{info['port']}"
         urllib.request.urlopen(url + "/api/ping", timeout=1)
         return url
@@ -783,7 +834,7 @@ def main(argv):
     server = ThreadingHTTPServer(("127.0.0.1", int(os.environ.get("CAT_TUTORIAL_PORT", "0"))), H)
     port = server.server_address[1]
     PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PORT_FILE.write_text(json.dumps({"port": port, "pid": os.getpid()}))
+    PORT_FILE.write_text(json.dumps({"port": port, "pid": os.getpid()}), encoding="utf-8")
     load_session()
     if folders:
         try:
@@ -799,7 +850,7 @@ def main(argv):
         server.serve_forever()
     finally:
         try:
-            if json.loads(PORT_FILE.read_text()).get("port") == port:
+            if json.loads(PORT_FILE.read_text(encoding="utf-8")).get("port") == port:
                 PORT_FILE.unlink()
         except Exception:  # noqa: BLE001
             pass

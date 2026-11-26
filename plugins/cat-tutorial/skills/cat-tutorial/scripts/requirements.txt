@@ -4,3 +4,4 @@ torch>=2.9
 open_clip_torch>=3
 # chỉ cần cho chế độ CAT_TUTORIAL_BACKEND=claude
 anthropic>=2.11
+rapidocr-onnxruntime>=1.4   # nhận ra chữ watermark (CapCut AI...) để che

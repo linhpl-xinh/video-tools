@@ -74,7 +74,8 @@ aside{background:var(--panel);backdrop-filter:var(--blur);-webkit-backdrop-filte
 .gh .car{transition:transform .15s;font-size:9px}
 .gh.closed .car{transform:rotate(-90deg)}
 .gh .gx{opacity:0;padding:0 6px;font-size:15px;line-height:1;color:var(--dim)}
-.gh:hover .gx{opacity:1}
+.gh:hover .gx,.gh .gx.on{opacity:1}
+.gh .gx{opacity:.45}
 .gh .gx:hover{color:var(--cut);background:var(--cut-soft)}
 .item{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;cursor:pointer;font-size:13.5px}
 .item:hover{background:var(--soft)}
@@ -301,6 +302,7 @@ button:not(.primary):not(.ok):hover{background:var(--hover)!important}
     <button class="sm" id="btnDirTop" style="display:none" title="Chọn 1 thư mục, hoặc thư mục cha để tải mọi thư mục con bên trong">+ Thư mục</button>
     <button class="sm" id="btnPick">+ Thêm thư mục</button>
     <div class="menu" id="hmenu"><button class="ico" id="bHMenu" title="Thêm">⋯</button><div class="pop">
+      <button id="btnReload">⟳ Nhận diện lại tất cả</button>
       <button id="btnReveal">Mở thư mục kết quả</button>
       <hr><button id="btnClear" class="danger">Xoá danh sách (bắt đầu mới)</button></div></div>
     <button class="primary sm" id="btnExportAll" disabled>Xuất video</button>
@@ -378,7 +380,7 @@ function renderChrome() {
     const gv = groupVids(g), closed = collapsed.has(g.folder), r = gv.filter(v => v.reviewed).length;
     return `<div class="gh ${closed ? "closed" : ""}" data-g="${esc(g.folder)}" title="${esc(g.folder)}">
         <span class="car">▼</span><span class="gn">${esc(g.name)}</span><span class="tab">${r}/${gv.length}</span>
-        <button class="gx" data-rm="${esc(g.folder)}" title="Gỡ thư mục khỏi danh sách (không xoá file)">×</button></div>` +
+        <button class="gx" data-rl="${esc(g.folder)}" title="Nhận diện lại thư mục này">⟳</button><button class="gx" data-rm="${esc(g.folder)}" title="${S.web ? "Xoá thư mục này khỏi máy chủ" : "Gỡ thư mục khỏi danh sách (không xoá file)"}">×</button></div>` +
       (closed ? "" : gv.map(v => {
         const [lab, cls] = flag(v);
         const d = busy(v) || v.status === "exporting" ? "spin" : v.status === "error" ? "err" : v.reviewed || (v.status === "done" && !dirty(v)) ? "on" : "";
@@ -389,10 +391,11 @@ function renderChrome() {
   }).join("");
   document.querySelectorAll(".item").forEach(el => el.onclick = () => { view = "one"; select(el.dataset.n); });
   document.querySelectorAll(".gh").forEach(el => el.onclick = e => {
-    if (e.target.closest("[data-rm]")) return;
+    if (e.target.closest("[data-rm],[data-rl]")) return;
     collapsed.has(el.dataset.g) ? collapsed.delete(el.dataset.g) : collapsed.add(el.dataset.g); ovKey = null; render();
   });
   document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => removeFolder(b.dataset.rm));
+  document.querySelectorAll("[data-rl]").forEach(b => b.onclick = () => reanalyze({folder: b.dataset.rl}));
 }
 
 function render() {
@@ -460,13 +463,17 @@ function renderOverview() {
       const gv = groupVids(g), closed = collapsed.has(g.folder), r = gv.filter(v => v.reviewed).length;
       return `<div class="sect ${closed ? "closed" : ""}" data-g="${esc(g.folder)}" title="${esc(g.folder)}"><span class="car">▼</span>${esc(g.name)}
           <span class="tab" style="font-weight:500">${r}/${gv.length}</span><div class="spacer"></div>
-          <button class="sm" data-revg="${esc(g.folder)}" style="text-transform:none;letter-spacing:0" ${gv.some(v => !busy(v) && !v.reviewed) ? "" : "disabled"}>Duyệt cả thư mục</button></div>
+          <button class="sm" data-revg="${esc(g.folder)}" style="text-transform:none;letter-spacing:0" ${gv.some(v => !busy(v) && !v.reviewed) ? "" : "disabled"}>Duyệt cả thư mục</button>
+          <button class="sm" data-rlg="${esc(g.folder)}" style="text-transform:none;letter-spacing:0">⟳ Nhận diện lại</button>
+          <button class="sm danger" data-rmg="${esc(g.folder)}" style="text-transform:none;letter-spacing:0">${S.web ? "Xoá thư mục" : "Gỡ thư mục"}</button></div>
         ${closed ? "" : `<div class="grid">${gv.map(card).join("")}</div>`}`;
     }).join("")}</div>`;
   document.querySelectorAll(".vc").forEach(el => el.onclick = e => { if (e.target.closest("[data-rev]")) return; view = "one"; select(el.dataset.n); });
   document.querySelectorAll("[data-rev]").forEach(b => b.onclick = () => review(b.dataset.rev, !V(b.dataset.rev).reviewed));
   const revMany = async list => { for (const v of list) if (!busy(v) && !v.reviewed) await review(v.id, true, true); ovKey = null; render(); };
   $("#revAll").onclick = () => revMany(S.videos);
+  document.querySelectorAll("[data-rlg]").forEach(b => b.onclick = e => { e.stopPropagation(); reanalyze({folder: b.dataset.rlg}); });
+  document.querySelectorAll("[data-rmg]").forEach(b => b.onclick = e => { e.stopPropagation(); removeFolder(b.dataset.rmg); });
   document.querySelectorAll("[data-revg]").forEach(b => b.onclick = e => { e.stopPropagation(); revMany(S.videos.filter(v => v.folder === b.dataset.revg)); });
   document.querySelectorAll(".sect").forEach(el => el.onclick = e => {
     if (e.target.closest("button")) return;
@@ -502,8 +509,10 @@ function buildDetail(v, ready) {
         <button id="bExport">Xuất riêng video này</button>
         <button id="bOutput">Xem bản đã xuất</button>
         <button id="bDl" style="display:none">Tải bản đã xuất về máy</button>
-        <hr><button id="bReset">Khôi phục gợi ý của máy</button>
-        <button id="bNone">Không cắt video này</button></div></div></div>
+        <hr><button id="bReload">⟳ Nhận diện lại video này</button>
+        <button id="bReset">Khôi phục gợi ý của máy</button>
+        <button id="bNone">Không cắt video này</button>
+        <button id="bWm" style="display:none"></button></div></div></div>
     <div id="dmsg"></div>
     <div class="tlw" id="tlw">
       <div class="tl" id="tl"></div><div class="ruler" id="ruler"></div>
@@ -548,6 +557,8 @@ function buildDetail(v, ready) {
   $("#cbPrev").checked = previewCut; $("#cbPrev").onchange = e => previewCut = e.target.checked;
   $("#bMenu").onclick = e => { e.stopPropagation(); $("#menu").classList.toggle("open"); };
   $("#bReview").onclick = () => review(v.id, !V(v.id).reviewed);
+  $("#bReload").onclick = () => reanalyze({v: v.id});
+  $("#bWm").onclick = async () => { S = await api("/api/wm", {v: v.id, on: !(V(v.id).wm_on !== false)}); built = null; ovKey = null; render(); };
   $("#bReset").onclick = () => saveSegs(v.id, V(v.id).auto_segs.map(x => [...x]));
   $("#bNone").onclick = () => saveSegs(v.id, []);
   $("#bExport").onclick = () => api("/api/export", {names: [v.id]}).then(j => { S = j; render(); toast("Đang xuất " + stem(v.name)); });
@@ -590,8 +601,11 @@ function drawPend() {
 function updateDetail(v, ready) {
   const [lab, cls] = flag(v);
   $("#dpill").innerHTML = (cls && cls !== "ok") || v.status === "done" ? `<span class="pill ${cls}">${lab}</span>` : edited(v) ? `<span class="pill warn">Đã chỉnh tay</span>` : "";
-  $("#dmsg").innerHTML = v.error ? `<div class="errbox">${esc(v.error)}</div>` : "";
-  $("#dmsg").style.display = v.error ? "" : "none";
+  const wmN = (v.wm || []).length, wmOn = v.wm_on !== false;
+  $("#dmsg").innerHTML = v.error ? `<div class="errbox">${esc(v.error)}</div>`
+    : wmN ? `<div class="errbox" style="background:var(--keep-soft,#e8f5e9);color:inherit">${wmOn ? `Đã nhận ra chữ watermark (${wmN} vùng) – sẽ tự che khi xuất.` : "Che chữ watermark đang TẮT cho video này."}</div>` : "";
+  $("#dmsg").style.display = v.error || wmN ? "" : "none";
+  $("#bWm").style.display = wmN ? "" : "none"; $("#bWm").textContent = wmOn ? "Tắt che chữ watermark" : "Bật che chữ watermark";
   if (!ready) return;
   const rb = $("#bReview");
   rb.className = v.reviewed ? "btn" : "ok"; rb.textContent = v.reviewed ? "✓ Đã duyệt" : "✓ Duyệt";
@@ -674,6 +688,12 @@ async function review(id, on, quiet) {
     toast(next ? "Đã duyệt → " + mid(stem(next.name), 30) : "Đã duyệt hết! Bấm Xuất để lưu video.");
     if (next) setTimeout(() => select(next.id), 300);
   }
+}
+async function reanalyze(body) {
+  const vs = body.v ? S.videos.filter(v => v.id === body.v) : body.folder ? S.videos.filter(v => v.folder === body.folder) : S.videos;
+  const lost = vs.filter(v => !busy(v) && v.status !== "exporting" && (v.reviewed || edited(v))).length;
+  if (!confirm(`Nhận diện lại ${vs.length} video?` + (lost ? `\n${lost} video đã duyệt/chỉnh sẽ mất điểm cắt hiện tại.` : "") + "\n(Giữ nguyên file đã tải lên.)")) return;
+  S = await api("/api/reanalyze", body); built = null; ovKey = null; render(); toast("Đang nhận diện lại…");
 }
 async function removeFolder(folder) {
   const gv = S.videos.filter(v => v.folder === folder);
@@ -808,7 +828,7 @@ $("#fDir").onchange = e => {
   for (const file of e.target.files) {
     const parts = (file.webkitRelativePath || file.name).split("/");
     if (skipPath(parts)) continue;
-    items.push({file, batch: parts.length > 1 ? parts[parts.length - 2] : stamp()});
+    items.push({file, batch: parts.length > 1 ? parts.slice(0, -1).join(" - ") : stamp()});  // cả đường dẫn thư mục, để 2 thư mục con trùng tên không bị gộp
   }
   enqueue(items); e.target.value = "";
 };
@@ -816,7 +836,7 @@ async function walk(entry, batch, out) {
   if (entry.isFile) { out.push({file: await new Promise((res, rej) => entry.file(res, rej)), batch}); return; }
   const rd = entry.createReader(); let all = [], got;
   do { got = await new Promise((res, rej) => rd.readEntries(res, rej)); all = all.concat(got); } while (got.length);
-  for (const c of all) { if (c.name === OUTDIR || c.name.startsWith(".")) continue; await walk(c, c.isDirectory ? c.name : entry.name, out); }
+  for (const c of all) { if (c.name === OUTDIR || c.name.startsWith(".")) continue; await walk(c, c.isDirectory ? batch + " - " + c.name : batch, out); }
 }
 let dragN = 0;
 window.addEventListener("dragenter", e => { if (!S.web || !e.dataTransfer?.types?.includes("Files")) return; e.preventDefault(); dragN++; $("#drop").classList.add("on"); });
@@ -829,6 +849,7 @@ window.addEventListener("drop", async e => {
   for (const en of entries) await walk(en, en.isDirectory ? en.name : b, out);
   enqueue(out);
 });
+$("#btnReload").onclick = () => reanalyze({});
 $("#btnClear").onclick = async () => {
   const pending = S.videos.filter(v => needsExport(v) && (v.reviewed || edited(v))).length;
   if (!confirm("Xoá toàn bộ danh sách thư mục khỏi công cụ?" + (pending ? `\n${pending} video đã duyệt/chỉnh nhưng chưa xuất sẽ mất thay đổi.` : "") + (S.web ? "\nToàn bộ video đã tải lên sẽ bị xoá khỏi máy chủ." : "\n(Không xoá file nào trên máy.)"))) return;

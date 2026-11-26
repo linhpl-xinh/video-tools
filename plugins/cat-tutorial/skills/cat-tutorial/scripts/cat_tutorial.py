@@ -40,6 +40,13 @@ MODEL = os.environ.get("CAT_TUTORIAL_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("CAT_TUTORIAL_EFFORT", "medium")
 WORKERS = int(os.environ.get("CAT_TUTORIAL_WORKERS", "4"))
 OUT_DIRNAME = os.environ.get("CAT_TUTORIAL_OUTDIR", "da_cat_tutorial")
+# Windows chạy ngầm ghi stdout/stderr bằng cp1252 -> tiếng Việt làm Python dừng. Luôn dùng UTF-8.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 
 
@@ -90,6 +97,16 @@ def get_client():
         import anthropic
         _client = anthropic.Anthropic(max_retries=4)
     return _client
+
+
+# ---------------------------------------------------------------- logo nảy (tự chèn sau khi cắt)
+# Đặt file logo.png (nền trong suốt) cạnh cat_tutorial.py; không có file thì bỏ qua, không lỗi.
+LOGO_PATH = Path(os.environ.get("CAT_LOGO", Path(__file__).with_name("logo.png")))
+LOGO_SCALE = float(os.environ.get("CAT_LOGO_SCALE", "0.28"))   # bề ngang logo / bề ngang video
+LOGO_ALPHA = float(os.environ.get("CAT_LOGO_ALPHA", "0.35"))   # độ đục (mờ)
+LOGO_BLUR = float(os.environ.get("CAT_LOGO_BLUR", "4"))        # độ nhoè
+LOGO_SPEED_X = float(os.environ.get("CAT_LOGO_VX", "90"))      # px/giây
+LOGO_SPEED_Y = float(os.environ.get("CAT_LOGO_VY", "60"))
 
 
 # ---------------------------------------------------------------- ffmpeg helpers
@@ -359,8 +376,18 @@ def merge(segs):
 def render(src: Path, dst: Path, keeps: list[tuple[float, float]], info: dict):
     fade = 0.25
     parts, labels = [], []
+    wm = info.get("wm") or []
+    masks = sorted({w["mask"] for w in wm if w.get("mask") and Path(w["mask"]).exists()})
+    rest = [w for w in wm if not (w.get("mask") and Path(w["mask"]).exists())]
+    if wm:  # xoá chữ watermark (CapCut AI...) trên video gốc rồi mới cắt
+        chain = []
+        if masks:  # mặt nạ đúng nét chữ -> removelogo vá theo nền, ít lộ hơn delogo
+            mp = masks[0].replace("\\", "/").replace(":", "\\:")
+            chain.append(f"removelogo=f='{mp}'")
+        chain += [f"delogo=x={w['x']}:y={w['y']}:w={w['w']}:h={w['h']}:enable='between(t\\,{w['t0']}\\,{w['t1']})'" for w in rest]
+        parts.append(f"[0:v]{','.join(chain)},split={len(keeps)}" + "".join(f"[s{i}]" for i in range(len(keeps))))
     for i, (a, b) in enumerate(keeps):
-        parts.append(f"[0:v]trim=start={a:.4f}:end={b:.4f},setpts=PTS-STARTPTS[v{i}]")
+        parts.append(f"[{'s' + str(i) if wm else '0:v'}]trim=start={a:.4f}:end={b:.4f},setpts=PTS-STARTPTS[v{i}]")
         if info["has_audio"]:
             L = b - a
             af = f"[0:a]atrim=start={a:.4f}:end={b:.4f},asetpts=PTS-STARTPTS"
@@ -373,8 +400,21 @@ def render(src: Path, dst: Path, keeps: list[tuple[float, float]], info: dict):
         else:
             labels.append(f"[v{i}]")
     a = 1 if info["has_audio"] else 0
-    fc = ";".join(parts) + ";" + "".join(labels) + f"concat=n={len(keeps)}:v=1:a={a}[v]" + ("[a]" if a else "")
-    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-filter_complex", fc, "-map", "[v]"]
+    logo = LOGO_PATH if LOGO_PATH.exists() else None
+    vout = "[vc]" if logo else "[v]"
+    fc = ";".join(parts) + ";" + "".join(labels) + f"concat=n={len(keeps)}:v=1:a={a}{vout}" + ("[a]" if a else "")
+    if logo:
+        # Logo mờ + blur, nảy qua lại khắp khung (tam giác theo thời gian)
+        W, H = info["width"], info["height"]
+        lw = max(32, int(W * LOGO_SCALE) // 2 * 2)
+        tri = lambda v, span: f"abs(mod(t*{v}\\,2*({span}))-({span}))"  # noqa: E731
+        fc += (f";[1:v]format=rgba,scale={lw}:-2,gblur=sigma={LOGO_BLUR},"
+               f"colorchannelmixer=aa={LOGO_ALPHA}[lg]"
+               f";[vc][lg]overlay=x='{tri(LOGO_SPEED_X, 'W-w')}':y='{tri(LOGO_SPEED_Y, 'H-h')}':shortest=1[v]")
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src)]
+    if logo:
+        cmd += ["-loop", "1", "-framerate", f"{info['fps']:.3f}", "-i", str(logo)]
+    cmd += ["-filter_complex", fc, "-map", "[v]"]
     if a:
         cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
     cmd += ["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p",
@@ -395,6 +435,18 @@ def analyze(src: Path, info: dict, log) -> tuple[list[tuple[float, float]], str]
     return merge(segs), note
 
 
+def detect_wm(src: Path, info: dict, log) -> list[dict]:
+    """Tìm chữ watermark (CapCut AI...) để che. Lỗi gì cũng không làm hỏng việc cắt."""
+    if os.environ.get("CAT_WM", "1") == "0":
+        return []
+    try:
+        import wm_detect
+        return wm_detect.find_watermarks(src, info, extract, lambda m: log(f"[{src.name}]{m}"))
+    except Exception as ex:  # noqa: BLE001
+        log(f"[{src.name}] che chữ: lỗi {type(ex).__name__}: {ex}")
+        return []
+
+
 def keeps_from(segs: list[tuple[float, float]], duration: float) -> list[tuple[float, float]]:
     keeps, t = [], 0.0
     for s, e in sorted(segs):
@@ -412,7 +464,7 @@ def export(src: Path, out_dir: Path, segs: list[tuple[float, float]], info: dict
     keeps = keeps_from(segs, info["duration"])
     if not keeps:
         raise RuntimeError("cả video đều bị đánh dấu cắt – không xuất")
-    if not segs:
+    if not segs and not LOGO_PATH.exists() and not info.get("wm"):
         dst = out_dir / out_name(src)
         shutil.copy2(src, dst)
         return dst
@@ -428,6 +480,7 @@ def process(src: Path, out_dir: Path, log) -> Result:
         res.duration = info["duration"]
         segs, res.note = analyze(src, info, log)
         res.cuts = segs
+        info["wm"] = detect_wm(src, info, log)
         res.keeps = keeps_from(segs, info["duration"])
         res.dst = export(src, out_dir, segs, info)
         # ảnh soát cho báo cáo: khung cuối trước & khung đầu sau mỗi mối cắt
