@@ -817,4 +817,10 @@ def main_web():
 
 
 if __name__ == "__main__":
+    # Windows chạy ngầm (Task Scheduler) ghi log bằng cp1252 -> chữ tiếng Việt làm Python dừng. Luôn dùng UTF-8.
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
     sys.exit(main(sys.argv[1:]))
