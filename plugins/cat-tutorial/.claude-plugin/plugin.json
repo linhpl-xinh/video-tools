@@ -1,5 +1,5 @@
 {
   "name": "cat-tutorial",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Tự nhận diện và cắt bỏ đoạn in-app / tutorial (quay điện thoại, hướng dẫn bấm app, logo app) khỏi hàng loạt video quảng cáo; chạy offline trên máy, có giao diện duyệt, xuất ra da_cat_tutorial."
 }
